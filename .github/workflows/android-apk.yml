@@ -49,15 +49,22 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Set up Android SDK + NDK + cmdline-tools
+      - name: Set up Android SDK + cmdline-tools
         uses: android-actions/setup-android@v3
         with:
-          packages: "ndk;26.3.11579974 platforms;android-34 build-tools;34.0.0"
+          packages: "platforms;android-34 build-tools;34.0.0"
           accept-android-sdk-licenses: true
+
+      # Same NDK the project's release workflow already builds with.
+      - name: Install Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
 
       - name: Point the build at the NDK
         run: |
-          NDK="$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d | head -n1)"
+          NDK="$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -n1)"
+          if [ -z "$NDK" ]; then NDK="$ANDROID_NDK_HOME"; fi
           echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
           echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
           echo "Using NDK at: $NDK"
