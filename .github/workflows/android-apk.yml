@@ -67,11 +67,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Set up Node (for Tauri CLI)
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Set up Android SDK + cmdline-tools
         uses: android-actions/setup-android@v3
         with:
@@ -84,25 +79,25 @@ jobs:
         with:
           ndk-version: r26d
 
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.10.2
 
-      - name: Install Tauri CLI via npm (precompiled, avoids 5m build)
-        run: npm install -g @tauri-apps/cli
+      - name: Install tauri-cli and cargo-ndk (precompiled binaries, 5s)
+        run: cargo binstall --no-confirm tauri-cli cargo-ndk
 
       - name: Generate the Android project
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: npx tauri android init --ci
+        run: cargo tauri android init --ci
 
       - name: Build the debug APK
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: npx tauri android build --apk --debug --target aarch64
+        run: cargo tauri android build --apk --debug --target aarch64
 
       - name: Locate the APK
         id: apk
