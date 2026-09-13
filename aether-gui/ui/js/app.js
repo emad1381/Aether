@@ -235,7 +235,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     metricProtocol.textContent = formatProtocol(val);
     const h2Opts = document.getElementById('masqueH2Options');
     if (h2Opts) {
-      h2Opts.style.display = val === 'masque-h2' ? 'block' : 'none';
+      if (val === 'masque-h2') {
+        h2Opts.classList.remove('collapsed');
+        h2Opts.classList.add('expanded');
+      } else {
+        h2Opts.classList.remove('expanded');
+        h2Opts.classList.add('collapsed');
+      }
     }
   });
 
@@ -291,7 +297,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (protoCard) protoCard.classList.add('active');
 
     const h2Opts = document.getElementById('masqueH2Options');
-    if (h2Opts) h2Opts.style.display = config.protocol === 'masque-h2' ? 'block' : 'none';
+    if (h2Opts) {
+      if (config.protocol === 'masque-h2') {
+        h2Opts.classList.remove('collapsed');
+        h2Opts.classList.add('expanded');
+      } else {
+        h2Opts.classList.remove('expanded');
+        h2Opts.classList.add('collapsed');
+      }
+    }
 
     // Scan cards
     const scanCard = document.querySelector(`#scanModeCards .radio-card[data-value="${config.scan_mode}"]`);
