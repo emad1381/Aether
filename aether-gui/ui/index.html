@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aether</title>
+  <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="./assets/logo.png" alt="Aether" class="brand-logo" onerror="this.style.display='none'">
+        <div class="brand-info">
+          <h1>Aether</h1>
+          <span>Free Internet</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <div class="nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          <span>Dashboard</span>
+        </div>
+        <div class="nav-item" data-view="protocols">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+          <span>Protocols</span>
+        </div>
+        <div class="nav-item" data-view="scanner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+          <span>Scan &amp; Noise</span>
+        </div>
+        <div class="nav-item" data-view="rules">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          <span>Routing Rules</span>
+        </div>
+        <div class="nav-item" data-view="zerotrust">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          <span>Zero Trust</span>
+        </div>
+        <div class="nav-item" data-view="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Settings</span>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="proxy-quick-toggle">
+          <span>System Proxy</span>
+          <label class="switch">
+            <input type="checkbox" id="quickProxyToggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <div class="views-viewport">
+        <!-- View 1: Dashboard -->
+        <section id="view-dashboard" class="view-section active">
+          <div class="dashboard-view">
+            <!-- Power Button -->
+            <div id="powerBtnSection" class="power-section disconnected">
+              <div class="power-btn-outer" id="powerBtn">
+                <div class="power-btn-ring"></div>
+                <div class="power-btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                    <line x1="12" y1="2" x2="12" y2="12"></line>
+                  </svg>
+                </div>
+              </div>
+              <div id="statusBadge" class="status-badge disconnected">
+                <div class="status-dot"></div>
+                <span id="statusText">Disconnected</span>
+              </div>
+            </div>
+
+            <!-- Metrics Grid -->
+            <div class="metrics-grid">
+              <div class="metric-card">
+                <div class="metric-label">
+                  <span>Latency</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                </div>
+                <div class="metric-value" id="metricLatency">-- ms</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">
+                  <span>Protocol</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
+                </div>
+                <div class="metric-value" id="metricProtocol" style="font-size: 1.05rem;">MASQUE (H3)</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">
+                  <span>Uptime</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                </div>
+                <div class="metric-value" id="metricUptime">00:00:00</div>
+              </div>
+            </div>
+
+            <!-- Exit Node Banner -->
+            <div class="exit-node-banner">
+              <div class="exit-node-info">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-emerald)"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                <div>
+                  <div style="font-weight: 600;" id="exitIp">Not connected</div>
+                  <div style="font-size: 0.76rem; color: var(--text-secondary);" id="exitColo">Cloudflare Edge</div>
+                </div>
+              </div>
+              <div class="exit-badge">WARP PROTECTED</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 2: Protocols -->
+        <section id="view-protocols" class="view-section">
+          <div class="settings-panel">
+            <div class="panel-header">
+              <h2 class="panel-title">Transport Protocol</h2>
+              <p class="panel-desc">Select how Aether connects through restricted networks</p>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">Available Transports</div>
+              <div class="radio-cards-grid" id="protocolCards">
+                <div class="radio-card active" data-value="masque">
+                  <h4>MASQUE (HTTP/3)</h4>
+                  <p>QUIC over UDP. Recommended, fastest handshake and resilient to packet loss.</p>
+                </div>
+                <div class="radio-card" data-value="masque-h2">
+                  <h4>MASQUE (HTTP/2)</h4>
+                  <p>TLS over TCP. Appears as standard HTTPS web traffic. Use when UDP is throttled.</p>
+                </div>
+                <div class="radio-card" data-value="wg">
+                  <h4>WireGuard</h4>
+                  <p>Classic lean WireGuard tunnel. Fast and lightweight on open UDP networks.</p>
+                </div>
+                <div class="radio-card" data-value="gool">
+                  <h4>WARP-in-WARP (gool)</h4>
+                  <p>Two nested WireGuard layers. Bypasses single-hop WireGuard fingerprinting.</p>
+                </div>
+                <div class="radio-card" data-value="mim">
+                  <h4>MASQUE-in-MASQUE</h4>
+                  <p>Two nested MASQUE hops. Dialed from inside the edge for a different exit IP.</p>
+                </div>
+                <div class="radio-card" data-value="tor">
+                  <h4>Tor (Chain)</h4>
+                  <p>Tor carried inside the WARP tunnel. Your network never sees Tor traffic.</p>
+                </div>
+                <div class="radio-card" data-value="tor-reverse">
+                  <h4>Tor (Reverse)</h4>
+                  <p>Tunnel dialed through Tor on HTTP/2. WARP edge reached from a Tor exit.</p>
+                </div>
+                <div class="radio-card" data-value="tor-only">
+                  <h4>Tor Only</h4>
+                  <p>Direct Tor proxy with automated pluggable transport bridge fetching.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- MASQUE H2 Options -->
+            <div class="settings-card" id="masqueH2Options" style="display: none;">
+              <div class="card-title">HTTP/2 TLS Fragmentation</div>
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <div style="font-weight: 500; font-size: 0.88rem;">Fragment TLS ClientHello</div>
+                  <div style="font-size: 0.78rem; color: var(--text-secondary);">Splits handshake packets to evade SNI inspection</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="checkFragment">
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 3: Scanner & Noise -->
+        <section id="view-scanner" class="view-section">
+          <div class="settings-panel">
+            <div class="panel-header">
+              <h2 class="panel-title">Scanner &amp; Obfuscation</h2>
+              <p class="panel-desc">Configure endpoint discovery and deep packet inspection evasion</p>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">Scan Mode</div>
+              <div class="radio-cards-grid" id="scanModeCards">
+                <div class="radio-card" data-value="turbo">
+                  <h4>Turbo</h4>
+                  <p>Fastest. Connects to the first responsive verified gateway.</p>
+                </div>
+                <div class="radio-card active" data-value="balanced">
+                  <h4>Balanced (Default)</h4>
+                  <p>Tests multiple candidates and picks the lowest ping.</p>
+                </div>
+                <div class="radio-card" data-value="thorough">
+                  <h4>Thorough</h4>
+                  <p>Deep range sweep across subnets to find the lowest possible RTT.</p>
+                </div>
+                <div class="radio-card" data-value="stealth">
+                  <h4>Stealth</h4>
+                  <p>Slow, quiet probe cadence for networks monitoring port scans.</p>
+                </div>
+                <div class="radio-card" data-value="ironclad">
+                  <h4>Ironclad</h4>
+                  <p>Full tunnel + real HTTP request per candidate. Guaranteed working.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">Obfuscation Noise Profile</div>
+              <div class="radio-cards-grid" id="noizeCards">
+                <div class="radio-card active" data-value="firewall">
+                  <h4>Firewall (Balanced)</h4>
+                  <p>Recommended. Pads handshakes with randomized decoy noise.</p>
+                </div>
+                <div class="radio-card" data-value="gfw">
+                  <h4>GFW (Aggressive)</h4>
+                  <p>Heavy packet-shaping and timing jitter for strict DPI.</p>
+                </div>
+                <div class="radio-card" data-value="light">
+                  <h4>Light</h4>
+                  <p>Minimal padding with minimal latency overhead.</p>
+                </div>
+                <div class="radio-card" data-value="off">
+                  <h4>Off</h4>
+                  <p>No packet padding or noise injection.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">IP Address Family &amp; Override</div>
+              <div class="radio-cards-grid" id="ipFamilyCards" style="margin-bottom: 16px;">
+                <div class="radio-card active" data-value="v4">
+                  <h4>IPv4 Only</h4>
+                  <p>Recommended for most home and mobile connections.</p>
+                </div>
+                <div class="radio-card" data-value="both">
+                  <h4>Dual-Stack</h4>
+                  <p>Scans both IPv4 and IPv6 endpoints.</p>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="inputPeer">Manual Endpoint Override (Optional)</label>
+                <input type="text" id="inputPeer" class="form-input" placeholder="e.g. 162.159.192.1:443 (skips scanning)">
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 4: Routing Rules -->
+        <section id="view-rules" class="view-section">
+          <div class="settings-panel">
+            <div class="panel-header">
+              <h2 class="panel-title">Routing Rules</h2>
+              <p class="panel-desc">Control which destinations bypass or get blocked by the tunnel</p>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">Direct Routes (Bypass Tunnel)</div>
+              <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px;">
+                Domains, IP CIDRs, or ports that connect directly outside the tunnel (e.g. banking, domestic sites, LAN).
+              </p>
+              <textarea id="inputRouteDirect" class="form-input form-textarea" placeholder="private, bank.ir, *.ir, port:25"></textarea>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">Blocked Routes</div>
+              <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px;">
+                Domains or IPs that are completely blocked locally.
+              </p>
+              <textarea id="inputRouteBlock" class="form-input form-textarea" placeholder="ads.example.com, keyword:telemetry"></textarea>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">Windows Proxy Bypass List</div>
+              <input type="text" id="inputBypass" class="form-input" value="&lt;local&gt;;localhost;127.*;10.*;192.168.*;172.16.*;*.ir">
+            </div>
+          </div>
+        </section>
+
+        <!-- View 5: Zero Trust -->
+        <section id="view-zerotrust" class="view-section">
+          <div class="settings-panel">
+            <div class="panel-header">
+              <h2 class="panel-title">Cloudflare Zero Trust</h2>
+              <p class="panel-desc">Enrol this client into a WARP for Teams organization</p>
+            </div>
+
+            <div class="settings-card">
+              <div class="form-group">
+                <label class="form-label" for="inputTeam">Organization Team Name</label>
+                <input type="text" id="inputTeam" class="form-input" placeholder="e.g. acme (from acme.cloudflareaccess.com)">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="inputAccessEmail">Access Email (for one-time login code)</label>
+                <input type="email" id="inputAccessEmail" class="form-input" placeholder="user@company.com">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="inputAccessToken">Pre-enrolled Access Token / JWT (Optional)</label>
+                <input type="password" id="inputAccessToken" class="form-input" placeholder="Paste JWT token here if available">
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- View 6: Settings -->
+        <section id="view-settings" class="view-section">
+          <div class="settings-panel">
+            <div class="panel-header">
+              <h2 class="panel-title">Client Settings</h2>
+              <p class="panel-desc">Configure proxy listener ports and upstream chaining</p>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">Local Proxy Ports</div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group">
+                  <label class="form-label" for="inputSocksPort">SOCKS5 Port</label>
+                  <input type="number" id="inputSocksPort" class="form-input" value="1819">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="inputHttpPort">HTTP Proxy Port (Optional)</label>
+                  <input type="number" id="inputHttpPort" class="form-input" placeholder="e.g. 1820">
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <div class="card-title">Advanced Chaining &amp; DNS</div>
+              <div class="form-group">
+                <label class="form-label" for="inputUpstream">Upstream Proxy (Chain behind existing proxy)</label>
+                <input type="text" id="inputUpstream" class="form-input" placeholder="e.g. socks5://127.0.0.1:1080">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="inputDns">Custom DNS Resolvers</label>
+                <input type="text" id="inputDns" class="form-input" placeholder="e.g. 1.1.1.1, 1.0.0.1">
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Collapsible Console Drawer -->
+      <div id="consoleDrawer" class="console-drawer">
+        <div id="consoleHeader" class="console-header">
+          <div class="console-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+            <span>Live Output Console</span>
+          </div>
+          <div class="console-actions">
+            <button id="clearLogsBtn" class="btn-icon" title="Clear logs">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="18 15 12 9 6 15"></polyline></svg>
+          </div>
+        </div>
+        <div id="consoleLogs" class="console-logs"></div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

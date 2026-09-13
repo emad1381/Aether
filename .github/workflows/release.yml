@@ -76,6 +76,13 @@ jobs:
       - name: Build release binary
         run: cargo build --release --features tor --target ${{ matrix.target }}
 
+      - name: Build Windows GUI binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd "$env:GITHUB_WORKSPACE/aether-gui/src-tauri"
+          cargo build --release --target ${{ matrix.target }}
+
       - name: Package archive (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -88,7 +95,8 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item -Recurse -Force pt target/${{ matrix.target }}/release/pt
-          Compress-Archive -Path target/${{ matrix.target }}/release/aether.exe,target/${{ matrix.target }}/release/pt,run-aether.bat -DestinationPath ${{ matrix.archive }}
+          Copy-Item "$env:GITHUB_WORKSPACE/aether-gui/src-tauri/target/${{ matrix.target }}/release/aether-gui.exe" target/${{ matrix.target }}/release/
+          Compress-Archive -Path target/${{ matrix.target }}/release/aether-gui.exe,target/${{ matrix.target }}/release/aether.exe,target/${{ matrix.target }}/release/pt,run-aether.bat -DestinationPath ${{ matrix.archive }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -490,7 +498,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ always() && (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') }}
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
