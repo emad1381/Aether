@@ -12,7 +12,7 @@ on:
       - ".github/workflows/android-apk.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-apk
@@ -99,7 +99,7 @@ jobs:
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: cargo tauri android build --apk --debug --target aarch64
 
-      - name: Locate the APK
+      - name: Locate and prepare the APK
         id: apk
         run: |
           set -euo pipefail
@@ -111,12 +111,21 @@ jobs:
             echo "::error::no APK produced by the build"
             exit 1
           fi
-          echo "Found APK: $APK"
-          echo "path=$APK" | tee "$GITHUB_OUTPUT"
+          cp "$APK" "$GITHUB_WORKSPACE/Aether-Android.apk"
+          echo "Found APK: $APK (copied to $GITHUB_WORKSPACE/Aether-Android.apk)"
+          echo "path=$GITHUB_WORKSPACE/Aether-Android.apk" | tee "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aether-android-arm64-apk
+          name: aether-android-apk
           path: ${{ steps.apk.outputs.path }}
           if-no-files-found: error
+
+      - name: Attach APK to GitHub Releases (Direct Download)
+        uses: softprops/action-gh-release@v2
+        if: always()
+        with:
+          tag_name: "v2.0.0"
+          files: ${{ steps.apk.outputs.path }}
+          fail_on_unmatched_files: false
