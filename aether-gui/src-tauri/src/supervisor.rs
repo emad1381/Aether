@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use parking_lot::Mutex;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::broadcast;
@@ -185,8 +185,8 @@ impl Supervisor {
         self.is_stopping.store(true, Ordering::SeqCst);
         let _ = self.kill_tx.send(());
 
-        let mut child_guard = self.child.lock();
-        if let Some(mut child) = child_guard.take() {
+        let child_opt = self.child.lock().take();
+        if let Some(mut child) = child_opt {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
