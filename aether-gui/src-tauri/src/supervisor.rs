@@ -107,9 +107,9 @@ impl Supervisor {
 
             if let Some(pid) = child.id() {
                 let proc_handle = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
-                if proc_handle != 0 {
+                if !proc_handle.is_null() {
                     let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
-                    if job != 0 {
+                    if !job.is_null() {
                         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
                         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                         SetInformationJobObject(
