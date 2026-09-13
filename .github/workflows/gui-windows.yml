@@ -1,0 +1,74 @@
+name: gui-windows-fast
+
+# Fast lane: builds ONLY the Windows x64 GUI + core engine.
+# Use this for quick iteration instead of the full `release` matrix
+# (which builds macOS, Linux, musl, Android and Docker).
+# Trigger: Actions tab -> gui-windows-fast -> Run workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "aether-gui/**"
+      - ".github/workflows/gui-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  gui-windows:
+    name: Build Aether GUI (Windows x64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: aether
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install CMake and Ninja
+        uses: lukka/get-cmake@latest
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Build pluggable transports
+        shell: bash
+        run: bash ../pt-build.sh windows amd64 "$PWD/pt"
+
+      - name: Build core engine (aether.exe)
+        run: cargo build --release --features tor --target x86_64-pc-windows-msvc
+
+      - name: Build Windows GUI (aether-gui.exe)
+        shell: pwsh
+        run: |
+          cd "$env:GITHUB_WORKSPACE/aether-gui/src-tauri"
+          cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Package archive
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse -Force pt target/x86_64-pc-windows-msvc/release/pt
+          Copy-Item "$env:GITHUB_WORKSPACE/aether-gui/src-tauri/target/x86_64-pc-windows-msvc/release/aether-gui.exe" target/x86_64-pc-windows-msvc/release/
+          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/aether-gui.exe,target/x86_64-pc-windows-msvc/release/aether.exe,target/x86_64-pc-windows-msvc/release/pt,run-aether.bat -DestinationPath aether-windows-x86_64-gui.zip
+          Get-ChildItem aether-windows-x86_64-gui.zip
+          if (!(Test-Path target/x86_64-pc-windows-msvc/release/aether-gui.exe)) { throw "aether-gui.exe was not produced" }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-windows-x86_64-gui
+          path: aether/aether-windows-x86_64-gui.zip
+          if-no-files-found: error

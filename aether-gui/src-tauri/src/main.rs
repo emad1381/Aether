@@ -81,9 +81,14 @@ fn main() {
 
             let menu = Menu::with_items(app, &[&show_item, &toggle_item, &quit_item])?;
 
-            let _tray = TrayIconBuilder::new()
-                .menu(&menu)
-                .tooltip("Aether")
+            let tray_builder = TrayIconBuilder::new().menu(&menu).tooltip("Aether");
+            let tray_builder =
+                match tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png")) {
+                    Ok(icon) => tray_builder.icon(icon),
+                    Err(_) => tray_builder,
+                };
+
+            let _tray = tray_builder
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {

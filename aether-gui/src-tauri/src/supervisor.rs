@@ -3,6 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
