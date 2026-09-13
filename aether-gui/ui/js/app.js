@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     dns: '1.1.1.1, 1.0.0.1',
     upstream: '',
     auto_system_proxy: true,
+    auto_connect: true,
     bypass_list: '<local>;localhost;127.*;10.*;192.168.*;172.16.*;*.ir;bank.ir',
     route_direct: '',
     route_block: '',
@@ -57,8 +58,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (_) {}
 
   // -------------------------------------------------------------------------
-  // 2. WINDOW CONTROLS (Frameless Window Title Bar)
+  // 2. WINDOW CONTROLS & DRAGGING (Frameless Window Title Bar)
   // -------------------------------------------------------------------------
+  const titlebar = document.getElementById('window-titlebar');
+  if (titlebar) {
+    titlebar.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button')) return;
+      if (e.buttons === 1) {
+        api.startDragging();
+      }
+    });
+  }
+
   const btnMin = document.getElementById('btn-win-min');
   const btnMax = document.getElementById('btn-win-max');
   const btnClose = document.getElementById('btn-win-close');
@@ -609,6 +620,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // 0. Smart Auto Connection Mode Toggle
+  const rowProtocol = document.getElementById('row-protocol');
+  const rowScanMode = document.getElementById('row-scan-mode');
+
+  function updateAutoConnectUI(isAuto) {
+    config.auto_connect = isAuto;
+    if (rowProtocol) {
+      if (isAuto) {
+        rowProtocol.classList.add('opacity-50', 'pointer-events-none');
+      } else {
+        rowProtocol.classList.remove('opacity-50', 'pointer-events-none');
+      }
+    }
+    if (rowScanMode) {
+      if (isAuto) {
+        rowScanMode.classList.add('opacity-50', 'pointer-events-none');
+      } else {
+        rowScanMode.classList.remove('opacity-50', 'pointer-events-none');
+      }
+    }
+    if (ftActiveEngine) {
+      ftActiveEngine.textContent = isAuto
+        ? 'AUTO · Smart Routing Active'
+        : `${config.protocol.toUpperCase()} · ${config.scan_mode.toUpperCase()} Scan`;
+    }
+    api.saveGuiConfig(config);
+  }
+
+  setupToggleSwitch('toggle-auto-connect', config.auto_connect, (checked) => {
+    updateAutoConnectUI(checked);
+  });
+
   // 1. Auto System Proxy Toggle
   setupToggleSwitch('toggle-sysproxy', config.auto_system_proxy, (checked) => {
     config.auto_system_proxy = checked;
@@ -728,6 +771,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       route_direct: '',
       route_block: '',
       tunnel_mode: 'proxy',
+      auto_connect: true,
       tor_enabled: false,
       tor_mode: 'carry',
       tor_bridges: false,
@@ -823,6 +867,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     setTunnelMode(config.tunnel_mode || 'proxy');
+    updateAutoConnectUI(config.auto_connect !== false);
   }
 
   // Initialize Form

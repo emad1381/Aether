@@ -15,6 +15,13 @@
   main > :last-child { margin-bottom: 0 !important; }
 }
 
+#window-titlebar {
+  -webkit-app-region: drag;
+}
+#window-titlebar button {
+  -webkit-app-region: no-drag;
+}
+
 ::-webkit-scrollbar {
   display: none;
 }

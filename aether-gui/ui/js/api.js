@@ -95,6 +95,12 @@ export const api = {
     }
   },
 
+  async startDragging() {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('start_dragging');
+    }
+  },
+
   async onLog(callback) {
     if (hasTauri() && window.__TAURI__.event) {
       return await window.__TAURI__.event.listen('aether-log', (event) => {

@@ -95,6 +95,13 @@ fn close_window(app: AppHandle) {
     }
 }
 
+#[tauri::command]
+fn start_dragging(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.start_dragging();
+    }
+}
+
 fn main() {
     let supervisor = Arc::new(Supervisor::new());
 
@@ -178,7 +185,8 @@ fn main() {
             save_gui_config,
             minimize_window,
             maximize_window,
-            close_window
+            close_window,
+            start_dragging
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aether GUI");

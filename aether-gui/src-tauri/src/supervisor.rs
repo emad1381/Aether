@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Notify};
 
 use crate::proxy::set_windows_proxy;
 use crate::types::{LogEntry, State, TunnelConfig, TunnelStatus};
@@ -18,12 +18,13 @@ pub struct Supervisor {
     status: Mutex<TunnelStatus>,
     start_time: Mutex<Option<Instant>>,
     kill_tx: broadcast::Sender<()>,
+    connected_notify: Arc<Notify>,
     is_stopping: AtomicBool,
 }
 
 impl Supervisor {
     pub fn new() -> Self {
-        let (kill_tx, _) = broadcast::channel(4);
+        let (kill_tx, _) = broadcast::channel(8);
         Self {
             child: Mutex::new(None),
             current_config: Mutex::new(None),
@@ -39,6 +40,7 @@ impl Supervisor {
             }),
             start_time: Mutex::new(None),
             kill_tx,
+            connected_notify: Arc::new(Notify::new()),
             is_stopping: AtomicBool::new(false),
         }
     }
@@ -63,11 +65,10 @@ impl Supervisor {
         }
 
         let bin_path = find_aether_binary()?;
-        let args = build_cli_args(&cfg);
-
         self.is_stopping.store(false, Ordering::SeqCst);
         *self.current_config.lock() = Some(cfg.clone());
 
+        // Initialize Status
         {
             let mut st = self.status.lock();
             st.state = State::Connecting;
@@ -78,8 +79,100 @@ impl Supervisor {
             let _ = app.emit("aether-status", st.clone());
         }
 
-        let mut cmd = tokio::process::Command::new(&bin_path);
-        cmd.args(&args);
+        // ===================================================================
+        // SMART AUTO MODE LADDER
+        // ===================================================================
+        if cfg.auto_connect {
+            let ladder = [
+                ("gool", "WARP-in-WARP (gool)", "firewall"),
+                ("masque-h2", "MASQUE over TCP (HTTP/2)", "firewall"),
+                ("wg", "WireGuard", "balanced"),
+                ("masque", "MASQUE (HTTP/3)", "firewall"),
+            ];
+
+            for (proto, label, noize) in ladder {
+                if self.is_stopping.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+
+                let mut try_cfg = cfg.clone();
+                try_cfg.protocol = proto.to_string();
+                try_cfg.noize = noize.to_string();
+                try_cfg.scan_mode = "turbo".to_string();
+
+                let entry = LogEntry {
+                    timestamp: chrono_now(),
+                    level: "INFO".to_string(),
+                    message: format!("[AUTO] Probing candidate route: {} (Turbo Scan)...", label),
+                };
+                let _ = app.emit("aether-log", entry);
+
+                {
+                    let mut st = self.status.lock();
+                    st.state = State::Connecting;
+                    st.protocol = format!("AUTO: Testing {}...", label);
+                    let _ = app.emit("aether-status", st.clone());
+                }
+
+                let args = build_cli_args(&try_cfg);
+                let custom_proto = format!("AUTO: {}", label);
+
+                if self
+                    .spawn_process(&bin_path, &args, &app, &try_cfg, Some(&custom_proto))
+                    .await
+                    .is_ok()
+                {
+                    // Wait up to 5.5s for connected notification
+                    let notified = self.connected_notify.notified();
+                    tokio::select! {
+                        _ = notified => {
+                            let ok_entry = LogEntry {
+                                timestamp: chrono_now(),
+                                level: "INFO".to_string(),
+                                message: format!("[AUTO] Route confirmed! Connected via {}", label),
+                            };
+                            let _ = app.emit("aether-log", ok_entry);
+                            return Ok(());
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(5500)) => {
+                            let timeout_entry = LogEntry {
+                                timestamp: chrono_now(),
+                                level: "WARN".to_string(),
+                                message: format!("[AUTO] Candidate {} timed out, testing fallback route...", label),
+                            };
+                            let _ = app.emit("aether-log", timeout_entry);
+                            self.kill_current_child().await;
+                        }
+                    }
+                }
+            }
+
+            // All candidates in auto ladder failed
+            let mut st = self.status.lock();
+            st.state = State::Error;
+            st.error_message = Some("Auto connection exhausted all routes. Check network connectivity.".to_string());
+            let _ = app.emit("aether-status", st.clone());
+            return Err("Auto connection exhausted all routes.".to_string());
+        }
+
+        // ===================================================================
+        // MANUAL MODE (Uses the exact protocol chosen in Settings)
+        // ===================================================================
+        let args = build_cli_args(&cfg);
+        self.spawn_process(&bin_path, &args, &app, &cfg, None).await
+    }
+
+    async fn spawn_process(
+        &self,
+        bin_path: &Path,
+        args: &[String],
+        app: &AppHandle,
+        cfg: &TunnelConfig,
+        custom_proto: Option<&str>,
+    ) -> Result<(), String> {
+        let mut cmd = tokio::process::Command::new(bin_path);
+        cmd.args(args);
+        cmd.stdin(std::process::Stdio::null()); // NEVER wait for STDIN input!
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
@@ -133,8 +226,9 @@ impl Supervisor {
         // Spawn log readers
         let app_clone = app.clone();
         let mut kill_rx = self.kill_tx.subscribe();
-
         let cfg_clone = cfg.clone();
+        let custom_proto_owned = custom_proto.map(|s| s.to_string());
+
         tokio::spawn(async move {
             let mut lines_out = stdout.map(|s| BufReader::new(s).lines());
             let mut lines_err = stderr.map(|s| BufReader::new(s).lines());
@@ -153,7 +247,7 @@ impl Supervisor {
                     } => {
                         match line {
                             Ok(Some(msg)) => {
-                                handle_log_line(&app_clone, &msg, &cfg_clone);
+                                handle_log_line(&app_clone, &msg, &cfg_clone, custom_proto_owned.as_deref());
                             }
                             Ok(None) => break,
                             Err(_) => break,
@@ -168,7 +262,7 @@ impl Supervisor {
                     } => {
                         match line {
                             Ok(Some(msg)) => {
-                                handle_log_line(&app_clone, &msg, &cfg_clone);
+                                handle_log_line(&app_clone, &msg, &cfg_clone, custom_proto_owned.as_deref());
                             }
                             Ok(None) => break,
                             Err(_) => break,
@@ -181,15 +275,19 @@ impl Supervisor {
         Ok(())
     }
 
-    pub async fn stop_tunnel(&self, app: AppHandle) -> Result<(), String> {
-        self.is_stopping.store(true, Ordering::SeqCst);
-        let _ = self.kill_tx.send(());
-
+    async fn kill_current_child(&self) {
         let child_opt = self.child.lock().take();
         if let Some(mut child) = child_opt {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
+    }
+
+    pub async fn stop_tunnel(&self, app: AppHandle) -> Result<(), String> {
+        self.is_stopping.store(true, Ordering::SeqCst);
+        let _ = self.kill_tx.send(());
+
+        self.kill_current_child().await;
 
         // Deactivate system proxy if enabled
         let _ = set_windows_proxy(false, "127.0.0.1:1819", None, "");
@@ -214,9 +312,12 @@ impl Supervisor {
         Ok(())
     }
 
-    pub fn set_connected(&self, app: &AppHandle, cfg: &TunnelConfig) {
+    pub fn set_connected(&self, app: &AppHandle, cfg: &TunnelConfig, custom_proto: Option<&str>) {
         let mut st = self.status.lock();
         st.state = State::Connected;
+        if let Some(proto) = custom_proto {
+            st.protocol = proto.to_string();
+        }
         *self.start_time.lock() = Some(Instant::now());
 
         if cfg.auto_system_proxy || cfg.tunnel_mode == "system-wide" {
@@ -233,6 +334,7 @@ impl Supervisor {
         }
 
         let _ = app.emit("aether-status", st.clone());
+        self.connected_notify.notify_waiters();
     }
 
     pub fn set_scanning(&self, app: &AppHandle) {
@@ -260,7 +362,7 @@ fn chrono_now() -> String {
     dt.format("%H:%M:%S").to_string()
 }
 
-fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig) {
+fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto: Option<&str>) {
     let level = if line.contains("ERROR") || line.contains("[-] ") || line.starts_with("error:") {
         "ERROR"
     } else if line.contains("WARN") || line.contains("[!] ") {
@@ -279,9 +381,12 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig) {
     let _ = app.emit("aether-log", entry);
 
     // State machine extraction
-    if line.contains("socks5 server listening") || line.contains("exposing socks5") || line.contains("wireguard tunnel validated (end-to-end data confirmed)") {
+    if line.contains("socks5 server listening")
+        || line.contains("exposing socks5")
+        || line.contains("wireguard tunnel validated (end-to-end data confirmed)")
+    {
         if let Some(state) = app.try_state::<Arc<Supervisor>>() {
-            state.set_connected(app, cfg);
+            state.set_connected(app, cfg, custom_proto);
         }
     } else if line.contains("hunting for a working") || line.contains("hunting for") {
         if let Some(state) = app.try_state::<Arc<Supervisor>>() {
@@ -295,8 +400,10 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig) {
         let rest = &line[idx + 5..];
         if let Some(end) = rest.find(')') {
             let raw_rtt = &rest[..end];
-            // Format can be "84ms" or "84.2ms" or "Duration { ... }"
-            let num: String = raw_rtt.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let num: String = raw_rtt
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
             if let Ok(ms_f) = num.parse::<f64>() {
                 if let Some(state) = app.try_state::<Arc<Supervisor>>() {
                     state.set_latency(app, ms_f as u64);
@@ -372,7 +479,10 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
         args.push(format!("127.0.0.1:{http}"));
     }
 
-    // Protocol
+    // CRITICAL: Prevent STDIN prompt for last connection:
+    args.push("--no-quick-reconnect".to_string());
+
+    // Protocol selection
     if cfg.tor_enabled {
         match cfg.tor_mode.as_str() {
             "reach" => args.push("--tor-reverse".to_string()),
@@ -386,10 +496,11 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
         match cfg.protocol.as_str() {
             "masque" => {
                 args.push("--masque".to_string());
+                args.push("--h3".to_string()); // CRITICAL: Sets AETHER_MASQUE_HTTP2="0" so it NEVER prompts on STDIN!
             }
             "masque-h2" => {
                 args.push("--masque".to_string());
-                args.push("--h2".to_string());
+                args.push("--h2".to_string()); // Sets AETHER_MASQUE_HTTP2="1" so it NEVER prompts on STDIN!
                 if cfg.fragment {
                     args.push("--fragment".to_string());
                     if let Some(ref sz) = cfg.fragment_size {
@@ -438,6 +549,7 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
             }
             _ => {
                 args.push("--masque".to_string());
+                args.push("--h3".to_string());
             }
         }
     }
@@ -457,7 +569,7 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
     args.push("--noize".to_string());
     args.push(cfg.noize.clone());
 
-    // Manual peer
+    // Manual peer override
     if let Some(ref p) = cfg.peer {
         if !p.trim().is_empty() {
             args.push("--peer".to_string());

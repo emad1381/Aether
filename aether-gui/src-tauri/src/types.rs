@@ -65,6 +65,9 @@ pub struct TunnelConfig {
     #[serde(default)]
     pub route_block: Option<String>,
 
+    #[serde(default = "default_true")]
+    pub auto_connect: bool,
+
     #[serde(default = "default_tunnel_mode")]
     pub tunnel_mode: String, // "proxy" or "system-wide"
 
@@ -157,6 +160,7 @@ impl Default for TunnelConfig {
             dns: None,
             upstream: None,
             auto_system_proxy: true,
+            auto_connect: true,
             bypass_list: default_bypass_list(),
             route_direct: None,
             route_block: None,
