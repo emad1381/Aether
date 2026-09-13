@@ -1,0 +1,94 @@
+name: android-apk
+
+# Builds an installable Android APK of the Aether mobile app (Tauri v2).
+# Produces a debug-signed APK that installs on a phone directly, with no
+# Play Store setup or custom signing keys. Trigger from the Actions tab.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "aether-mobile/**"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  apk:
+    name: Build Aether APK (arm64-v8a)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: aether-mobile/src-tauri
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Build toolchain the core engine links against (BoringSSL via boring,
+      # quiche). openjdk is needed by the Gradle step of the Android build.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build nasm perl \
+            openjdk-17-jdk
+
+      - name: Install Rust (Android target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+
+      - name: Set up Node (for the Tauri CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Android SDK + NDK + cmdline-tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "ndk;26.3.11579974 platforms;android-34 build-tools;34.0.0"
+          accept-android-sdk-licenses: true
+
+      - name: Point the build at the NDK
+        run: |
+          NDK="$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d | head -n1)"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "Using NDK at: $NDK"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Generate the Android project
+        run: cargo tauri android init --target aarch64
+
+      - name: Build the debug APK
+        run: cargo tauri android build --apk --debug --target aarch64
+
+      - name: Locate the APK
+        id: apk
+        run: |
+          set -euo pipefail
+          APK="$(find "$GITHUB_WORKSPACE/aether-mobile/src-tauri/gen" -type f -name '*.apk' 2>/dev/null | head -n1 || true)"
+          if [ -z "$APK" ]; then
+            APK="$(find "$GITHUB_WORKSPACE" -type f -name '*.apk' 2>/dev/null | head -n1 || true)"
+          fi
+          if [ -z "$APK" ]; then
+            echo "::error::no APK produced by the build"
+            exit 1
+          fi
+          echo "Found APK: $APK"
+          echo "path=$APK" | tee "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-android-arm64
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error

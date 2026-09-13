@@ -1,0 +1,23 @@
+[package]
+name = "aether-mobile"
+version = "2.0.0"
+edition = "2021"
+authors = ["emad1381"]
+license = "AGPL-3.0-only"
+
+[lib]
+name = "aether_mobile_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+aether = { path = "../../aether" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "socks", "rustls-tls"] }
+parking_lot = "0.12"
+log = "0.4"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

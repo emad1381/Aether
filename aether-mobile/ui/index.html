@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<title>Aether</title>
+<link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+<main id="view-proxy" class="view active">
+  <header class="bar">
+    <div class="brand"><img src="assets/logo.png" alt="" class="logo"/><span class="brand-name">Aether</span></div>
+    <span class="ver" id="verBadge">v2.0.0</span>
+  </header>
+
+  <section class="hero">
+    <button id="connectBtn" class="big-btn" aria-pressed="false" type="button">
+      <span class="beacon" id="beacon"></span>
+      <span class="icon-wrap" id="iconWrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+      </span>
+      <span class="btn-label" id="btnLabel">Connect</span>
+    </button>
+    <div class="status-line" role="status" aria-live="polite">
+      <span class="dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">Disconnected</span>
+    </div>
+  </section>
+
+  <section class="card" id="detailsCard">
+    <button class="card-head" id="detailsToggle" aria-expanded="true" type="button">
+      <span class="card-title">Tunnel Details</span>
+      <span class="chev" id="detailsChev">▾</span>
+    </button>
+    <dl class="rows" id="detailsRows">
+      <div class="row"><dt>Protocol</dt><dd id="valProtocol">MASQUE / HTTP/3</dd></div>
+      <div class="row"><dt>Latency</dt><dd id="valLatency" class="dim">--</dd></div>
+      <div class="row"><dt>Uptime</dt><dd id="valUptime" class="dim">0s</dd></div>
+      <div class="row"><dt>Exit Location</dt><dd id="valExit" class="dim">--</dd></div>
+      <div class="row"><dt>Local proxy</dt><dd id="valSocks">127.0.0.1:1819</dd></div>
+    </dl>
+  </section>
+
+  <p class="hint">Android sends traffic through the proxy only from apps that use it. Set Wi-Fi proxy to <b id="hintSocks">127.0.0.1:1819</b> or use a client that reads SOCKS. On a rooted device <i>proxy</i> redirection works app-wide.</p>
+</main>
+
+<main id="view-console" class="view">
+  <header class="bar">
+    <div class="brand"><span class="brand-name">Activity</span></div>
+    <div class="filters" role="tablist">
+      <button class="chip active" data-filter="all" type="button">All</button>
+      <button class="chip" data-filter="events" type="button">Events</button>
+      <button class="chip" data-filter="errors" type="button">Errors</button>
+    </div>
+    <button class="icon-btn" id="clearLog" aria-label="Clear log" type="button">✕</button>
+  </header>
+  <div class="logbox" id="logbox" aria-live="polite"></div>
+</main>
+
+<main id="view-settings" class="view">
+  <header class="bar">
+    <div class="brand"><span class="brand-name">Settings</span></div>
+    <span class="ver" id="verBadge2">v2.0.0</span>
+  </header>
+
+  <section class="field">
+    <div class="field-top"><label for="protocolBtn">Protocol</label><span class="ok-tag" id="recTag">● Recommended</span></div>
+    <button class="select" id="protocolBtn" type="button"><span id="protocolLabel">MASQUE (Default, HTTP/3)</span><span class="caret">▾</span></button>
+    <div class="menu" id="protocolMenu" hidden>
+      <button class="opt" data-val="masque" data-label="MASQUE (Default, HTTP/3)" data-desc="Low-latency tunnel over HTTP/3, looks like ordinary web traffic." type="button"><span>MASQUE (Default, HTTP/3)</span><span class="tick">✓</span></button>
+      <button class="opt" data-val="masque-h2" data-label="MASQUE over TCP (HTTP/2)" data-desc="Same tunnel over TCP 443. Use when UDP is blocked or throttled." type="button"><span>MASQUE over TCP (HTTP/2)</span><span class="tick">✓</span></button>
+      <button class="opt" data-val="wg" data-label="WireGuard" data-desc="Classic UDP tunnel. Fastest where UDP passes." type="button"><span>WireGuard</span><span class="tick">✓</span></button>
+    </div>
+    <p class="desc" id="protocolDesc">Low-latency tunnel over HTTP/3, looks like ordinary web traffic.</p>
+  </section>
+
+  <section class="field">
+    <div class="field-top"><span>Scan speed</span><span class="mono-tag" id="scanHint">~default sweep</span></div>
+    <div class="seg" data-group="scan" role="radiogroup">
+      <button class="seg-btn" data-val="fast" data-hint="first answer wins" type="button">Fast</button>
+      <button class="seg-btn active" data-val="balanced" data-hint="~default sweep" type="button">Balanced</button>
+      <button class="seg-btn" data-val="deep" data-hint="whole ranges" type="button">Deep</button>
+    </div>
+    <p class="desc">Measures edge latency before it picks a gateway.</p>
+  </section>
+
+  <section class="field">
+    <div class="field-top"><span>Obfuscation</span><span class="mono-tag" id="obfHint">padding + jitter</span></div>
+    <div class="seg" data-group="obfuscation" role="radiogroup">
+      <button class="seg-btn" data-val="off" data-hint="raw packets (lowest overhead)" type="button">Off</button>
+      <button class="seg-btn active" data-val="balanced" data-hint="padding + jitter" type="button">Balanced</button>
+      <button class="seg-btn" data-val="strong" data-hint="max entropy" type="button">Strong</button>
+    </div>
+    <p class="desc">Shapes the handshake so deep packet inspection cannot match it.</p>
+  </section>
+
+  <section class="field">
+    <div class="field-top"><label for="serverInput">Server (IP:port)</label><span class="mono-tag">Optional</span></div>
+    <input id="serverInput" class="input mono" type="text" inputmode="url" placeholder="auto (leave empty)" autocomplete="off" spellcheck="false"/>
+    <p class="desc">Usually you don't need this; Aether routes to the fastest verified edge by itself.</p>
+  </section>
+
+  <button class="restore" id="restoreBtn" type="button">Restore defaults</button>
+  <span class="saved" id="savedFlash" hidden>✓ Saved</span>
+</main>
+
+<nav class="dock" aria-label="Main navigation" role="tablist">
+  <div class="dock-inner">
+    <span class="pill" id="dockPill"></span>
+    <button class="tab active" data-view="proxy" type="button"><span class="t-ic">⚡</span><span>Proxy</span></button>
+    <button class="tab" data-view="console" type="button"><span class="t-ic">▤</span><span>Console</span></button>
+    <button class="tab" data-view="settings" type="button"><span class="t-ic">⚙</span><span>Settings</span></button>
+  </div>
+</nav>
+
+<script src="js/app.js"></script>
+</body>
+</html>
