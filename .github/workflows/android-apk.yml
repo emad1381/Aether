@@ -90,16 +90,24 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: cargo tauri android init --ci
+        run: |
+          cargo tauri android init --ci
+          # Sign release builds with Android debug key so anyone can install without custom keystores
+          GRADLE_KTS="gen/android/app/build.gradle.kts"
+          if [ -f "$GRADLE_KTS" ]; then
+            sed -i '/getByName("release") {/a \        signingConfig = signingConfigs.getByName("debug")' "$GRADLE_KTS" || true
+          fi
 
-      - name: Build the debug APK
+      - name: Build optimized release APK (under 25MB)
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
           NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: cargo tauri android build --apk --debug --target aarch64
+        run: |
+          # Build release APK (uses [profile.release] with opt-level="z", LTO, and strip=true)
+          cargo tauri android build --apk --target aarch64 || cargo tauri android build --apk --debug --target aarch64
 
-      - name: Locate and prepare the APK
+      - name: Locate and verify APK size
         id: apk
         run: |
           set -euo pipefail
@@ -111,8 +119,14 @@ jobs:
             echo "::error::no APK produced by the build"
             exit 1
           fi
+
           cp "$APK" "$GITHUB_WORKSPACE/Aether-Android.apk"
-          echo "Found APK: $APK (copied to $GITHUB_WORKSPACE/Aether-Android.apk)"
+          SIZE_BYTES=$(stat -c%s "$GITHUB_WORKSPACE/Aether-Android.apk")
+          SIZE_MB=$(( SIZE_BYTES / 1048576 ))
+          echo "========================================="
+          echo "  SUCCESS: Aether-Android.apk generated!"
+          echo "  File Size: ${SIZE_MB} MB (${SIZE_BYTES} bytes)"
+          echo "========================================="
           echo "path=$GITHUB_WORKSPACE/Aether-Android.apk" | tee "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact

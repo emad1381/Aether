@@ -67,3 +67,8 @@ lto = "fat"
 codegen-units = 1
 panic = "unwind"
 strip = true
+
+[profile.dev]
+opt-level = "s"
+debug = false
+strip = true

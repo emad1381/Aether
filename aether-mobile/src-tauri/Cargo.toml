@@ -21,3 +21,15 @@ log = "0.4"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = "s"
+debug = false
+strip = true
