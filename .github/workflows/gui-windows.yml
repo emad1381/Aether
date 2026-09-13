@@ -15,6 +15,11 @@ on:
 permissions:
   contents: read
 
+# Only one fast build runs at a time; a newer push cancels the older queued run.
+concurrency:
+  group: gui-windows-fast
+  cancel-in-progress: true
+
 jobs:
   gui-windows:
     name: Build Aether GUI (Windows x64)
