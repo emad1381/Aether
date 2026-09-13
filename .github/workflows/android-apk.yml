@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -42,9 +46,9 @@ jobs:
       - name: Install Rust (Android target)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, armv7-linux-androideabi
+          targets: aarch64-linux-android
 
-      - name: Set up Node (for the Tauri CLI)
+      - name: Set up Node (for Tauri CLI)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -55,28 +59,31 @@ jobs:
           packages: "platforms;android-34 build-tools;34.0.0"
           accept-android-sdk-licenses: true
 
-      # Same NDK the project's release workflow already builds with.
       - name: Install Android NDK
+        id: ndk
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r26d
 
-      - name: Point the build at the NDK
-        run: |
-          NDK="$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -n1)"
-          if [ -z "$NDK" ]; then NDK="$ANDROID_NDK_HOME"; fi
-          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
-          echo "Using NDK at: $NDK"
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
+      - name: Install Tauri CLI via npm (precompiled, avoids 5m build)
+        run: npm install -g @tauri-apps/cli
 
       - name: Generate the Android project
-        run: cargo tauri android init --target aarch64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+          NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: npx tauri android init --ci
 
       - name: Build the debug APK
-        run: cargo tauri android build --apk --debug --target aarch64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+          NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: npx tauri android build --apk --debug --target aarch64
 
       - name: Locate the APK
         id: apk
@@ -96,6 +103,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aether-android-arm64
+          name: aether-android-arm64-apk
           path: ${{ steps.apk.outputs.path }}
           if-no-files-found: error
