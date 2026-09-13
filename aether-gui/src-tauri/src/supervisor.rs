@@ -219,10 +219,15 @@ impl Supervisor {
         st.state = State::Connected;
         *self.start_time.lock() = Some(Instant::now());
 
-        if cfg.auto_system_proxy {
+        if cfg.auto_system_proxy || cfg.tunnel_mode == "system-wide" {
             let socks_addr = format!("127.0.0.1:{}", cfg.socks_port);
-            let http_addr = cfg.http_port.map(|p| format!("127.0.0.1:{p}"));
-            if let Ok(()) = set_windows_proxy(true, &socks_addr, http_addr.as_deref(), &cfg.bypass_list) {
+            let http_addr = cfg
+                .http_port
+                .map(|p| format!("127.0.0.1:{p}"))
+                .or_else(|| Some("127.0.0.1:1820".to_string()));
+            if let Ok(()) =
+                set_windows_proxy(true, &socks_addr, http_addr.as_deref(), &cfg.bypass_list)
+            {
                 st.system_proxy_active = true;
             }
         }
@@ -361,67 +366,79 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
     args.push("--bind".to_string());
     args.push(format!("127.0.0.1:{}", cfg.socks_port));
 
-    if let Some(http) = cfg.http_port {
+    let effective_http = cfg.http_port.or(Some(1820));
+    if let Some(http) = effective_http {
         args.push("--http-proxy".to_string());
         args.push(format!("127.0.0.1:{http}"));
     }
 
     // Protocol
-    match cfg.protocol.as_str() {
-        "masque" => {
-            args.push("--masque".to_string());
+    if cfg.tor_enabled {
+        match cfg.tor_mode.as_str() {
+            "reach" => args.push("--tor-reverse".to_string()),
+            "tor-only" => args.push("--tor-only".to_string()),
+            _ => args.push("--tor".to_string()),
         }
-        "masque-h2" => {
-            args.push("--masque".to_string());
-            args.push("--h2".to_string());
-            if cfg.fragment {
-                args.push("--fragment".to_string());
-                if let Some(ref sz) = cfg.fragment_size {
-                    args.push("--fragment-size".to_string());
-                    args.push(sz.clone());
+        if cfg.tor_bridges {
+            args.push("--tor-bridges".to_string());
+        }
+    } else {
+        match cfg.protocol.as_str() {
+            "masque" => {
+                args.push("--masque".to_string());
+            }
+            "masque-h2" => {
+                args.push("--masque".to_string());
+                args.push("--h2".to_string());
+                if cfg.fragment {
+                    args.push("--fragment".to_string());
+                    if let Some(ref sz) = cfg.fragment_size {
+                        args.push("--fragment-size".to_string());
+                        args.push(sz.clone());
+                    }
+                    if let Some(ref dl) = cfg.fragment_delay {
+                        args.push("--fragment-delay".to_string());
+                        args.push(dl.clone());
+                    }
                 }
-                if let Some(ref dl) = cfg.fragment_delay {
-                    args.push("--fragment-delay".to_string());
-                    args.push(dl.clone());
+            }
+            "wg" | "wireguard" => {
+                args.push("--wg".to_string());
+            }
+            "gool" | "wiw" => {
+                args.push("--gool".to_string());
+                if let Some(ref out) = cfg.wiw_outer {
+                    args.push("--wiw-outer".to_string());
+                    args.push(out.clone());
+                }
+                if let Some(ref inn) = cfg.wiw_inner {
+                    args.push("--wiw-inner".to_string());
+                    args.push(inn.clone());
                 }
             }
-        }
-        "wg" | "wireguard" => {
-            args.push("--wg".to_string());
-        }
-        "gool" | "wiw" => {
-            args.push("--gool".to_string());
-            if let Some(ref out) = cfg.wiw_outer {
-                args.push("--wiw-outer".to_string());
-                args.push(out.clone());
+            "mim" => {
+                args.push("--mim".to_string());
+                if let Some(ref out) = cfg.mim_outer {
+                    args.push("--mim-outer".to_string());
+                    args.push(out.clone());
+                }
+                if let Some(ref inn) = cfg.mim_inner {
+                    args.push("--mim-inner".to_string());
+                    args.push(inn.clone());
+                }
             }
-            if let Some(ref inn) = cfg.wiw_inner {
-                args.push("--wiw-inner".to_string());
-                args.push(inn.clone());
+            "tor" => {
+                args.push("--tor".to_string());
             }
-        }
-        "mim" => {
-            args.push("--mim".to_string());
-            if let Some(ref out) = cfg.mim_outer {
-                args.push("--mim-outer".to_string());
-                args.push(out.clone());
+            "tor-reverse" => {
+                args.push("--tor-reverse".to_string());
             }
-            if let Some(ref inn) = cfg.mim_inner {
-                args.push("--mim-inner".to_string());
-                args.push(inn.clone());
+            "tor-only" => {
+                args.push("--tor-only".to_string());
             }
-        }
-        "tor" => {
-            args.push("--tor".to_string());
-        }
-        "tor-reverse" => {
-            args.push("--tor-reverse".to_string());
-        }
-        "tor-only" => {
-            args.push("--tor-only".to_string());
-        }
-        _ => {
-            args.push("--masque".to_string());
+            _ => {
+                args.push("--masque".to_string());
+            }
         }
     }
 

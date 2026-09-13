@@ -13,7 +13,7 @@ on:
       - ".github/workflows/gui-windows.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 # Only one fast build runs at a time; a newer push cancels the older queued run.
 concurrency:
@@ -37,6 +37,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+
+      # Speed up Windows compilation by caching dependencies
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            aether
+            aether-gui/src-tauri
 
       - name: Install Go
         uses: actions/setup-go@v5
@@ -77,3 +85,11 @@ jobs:
           name: aether-windows-x86_64-gui
           path: aether/aether-windows-x86_64-gui.zip
           if-no-files-found: error
+
+      - name: Publish to GitHub Releases (Direct Download)
+        uses: softprops/action-gh-release@v2
+        if: always()
+        with:
+          tag_name: "v2.0.0"
+          files: aether/aether-windows-x86_64-gui.zip
+          fail_on_unmatched_files: false

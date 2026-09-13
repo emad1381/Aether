@@ -68,6 +68,33 @@ fn save_gui_config(cfg: TunnelConfig) -> Result<(), String> {
     save_config(&cfg)
 }
 
+#[tauri::command]
+fn minimize_window(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.minimize();
+    }
+}
+
+#[tauri::command]
+fn maximize_window(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        if let Ok(is_max) = w.is_maximized() {
+            if is_max {
+                let _ = w.unmaximize();
+            } else {
+                let _ = w.maximize();
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn close_window(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.close();
+    }
+}
+
 fn main() {
     let supervisor = Arc::new(Supervisor::new());
 
@@ -148,7 +175,10 @@ fn main() {
             test_latency,
             fetch_trace_info,
             get_saved_config,
-            save_gui_config
+            save_gui_config,
+            minimize_window,
+            maximize_window,
+            close_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aether GUI");

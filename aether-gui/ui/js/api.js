@@ -77,6 +77,24 @@ export const api = {
     return Promise.resolve();
   },
 
+  async minimizeWindow() {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('minimize_window');
+    }
+  },
+
+  async maximizeWindow() {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('maximize_window');
+    }
+  },
+
+  async closeWindow() {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('close_window');
+    }
+  },
+
   async onLog(callback) {
     if (hasTauri() && window.__TAURI__.event) {
       return await window.__TAURI__.event.listen('aether-log', (event) => {

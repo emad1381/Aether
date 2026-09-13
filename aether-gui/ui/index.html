@@ -1,374 +1,715 @@
 <!DOCTYPE html>
-<html lang="en">
+<html class="dark" lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Aether</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
   <link rel="stylesheet" href="./css/style.css">
+  <script src="./vendor/tailwindcss.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "on-background": "#e4e1e6",
+            "on-secondary": "#003824",
+            "surface": "#141417",
+            "inverse-surface": "#e4e1e6",
+            "tertiary-container": "#ff625d",
+            "on-error": "#690005",
+            "background": "#0d0d0f",
+            "on-primary": "#552100",
+            "surface-container": "#18181c",
+            "inverse-primary": "#9e4300",
+            "outline": "#71717a",
+            "on-primary-container": "#532000",
+            "primary": "#ffb691",
+            "secondary": "#2dd4bf",
+            "outline-variant": "#52525b",
+            "on-surface-variant": "#a1a1aa",
+            "surface-container-high": "#222226",
+            "surface-container-low": "#131316",
+            "surface-tint": "#ffb691",
+            "on-surface": "#e4e1e6",
+            "surface-container-lowest": "#09090b",
+            "secondary-container": "#00a572",
+            "surface-variant": "#27272a",
+            "secondary-fixed-dim": "#4edea3",
+            "primary-container": "#f2711c",
+            "error": "#ef4444",
+            "error-container": "#93000a"
+          },
+          fontFamily: {
+            "body": ["Inter", "sans-serif"],
+            "mono": ["JetBrains Mono", "monospace"]
+          }
+        }
+      }
+    };
+  </script>
 </head>
-<body>
-  <div class="app-container">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="brand">
-        <img src="./assets/logo.png" alt="Aether" class="brand-logo" onerror="this.style.display='none'">
-        <div class="brand-info">
-          <h1>Aether</h1>
-          <span>Free Internet</span>
-        </div>
+<body class="bg-[#0d0d0f] text-on-surface select-none antialiased min-h-screen font-body overflow-hidden">
+  <!-- Custom 38px Frameless Window Title Bar with Drag Region -->
+  <header data-tauri-drag-region class="fixed top-0 left-0 right-0 h-[38px] bg-[#0d0d0f] border-b border-white/[0.07] flex items-center justify-between px-3 z-50 select-none">
+    <div data-tauri-drag-region class="flex items-center gap-2">
+      <div class="w-5 h-5 rounded bg-primary-container flex items-center justify-center overflow-hidden">
+        <img src="./assets/logo.svg" alt="Aether Logo" class="w-4 h-4 object-contain">
       </div>
+      <span data-tauri-drag-region class="text-[13px] font-semibold tracking-tight text-on-surface">Aether</span>
+      <span data-tauri-drag-region class="text-[10px] font-mono text-[#8e8e98] px-1.5 py-0.5 rounded bg-[#18181c] border border-white/[0.06]">v2.0.0</span>
+    </div>
+    <!-- Window Control Buttons -->
+    <div class="flex items-center h-full -mr-3">
+      <button aria-label="Minimize" id="btn-win-min" class="h-[38px] w-11 flex items-center justify-center text-on-surface-variant hover:bg-[#18181c] hover:text-on-surface transition-colors" type="button">
+        <span class="material-symbols-outlined text-[13px]">minimize</span>
+      </button>
+      <button aria-label="Maximize" id="btn-win-max" class="h-[38px] w-11 flex items-center justify-center text-on-surface-variant hover:bg-[#18181c] hover:text-on-surface transition-colors" type="button">
+        <span class="material-symbols-outlined text-[12px]">crop_square</span>
+      </button>
+      <button aria-label="Close" id="btn-win-close" class="h-[38px] w-11 flex items-center justify-center text-on-surface-variant hover:bg-error-container hover:text-error transition-colors" type="button">
+        <span class="material-symbols-outlined text-[14px]">close</span>
+      </button>
+    </div>
+  </header>
 
-      <nav class="nav-menu">
-        <div class="nav-item active" data-view="dashboard">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-          <span>Dashboard</span>
-        </div>
-        <div class="nav-item" data-view="protocols">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-          <span>Protocols</span>
-        </div>
-        <div class="nav-item" data-view="scanner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-          <span>Scan &amp; Noise</span>
-        </div>
-        <div class="nav-item" data-view="rules">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-          <span>Routing Rules</span>
-        </div>
-        <div class="nav-item" data-view="zerotrust">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-          <span>Zero Trust</span>
-        </div>
-        <div class="nav-item" data-view="settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-          <span>Settings</span>
-        </div>
-      </nav>
-
-      <div class="sidebar-footer">
-        <div class="proxy-quick-toggle">
-          <span>System Proxy</span>
-          <label class="switch">
-            <input type="checkbox" id="quickProxyToggle" checked>
-            <span class="slider"></span>
-          </label>
-        </div>
+  <!-- Left 60px Navigation Rail -->
+  <aside class="fixed left-0 top-[38px] bottom-0 w-[60px] bg-[#0d0d0f] border-r border-white/[0.07] flex flex-col justify-between items-center py-3 z-40 select-none">
+    <nav class="w-full flex flex-col items-center gap-1.5">
+      <div class="has-tooltip w-full flex justify-center">
+        <button id="nav-proxy" data-path="proxy-control" class="nav-rail-btn w-full h-11 flex items-center justify-center transition-colors bg-[#18181c] border-l-2 border-primary-container text-primary-container" type="button" aria-label="Proxy">
+          <span class="material-symbols-outlined text-[20px]">shield</span>
+        </button>
+        <div class="tooltip-box absolute left-[64px] top-2 z-50 bg-[#1e1e24] text-on-surface text-[11px] font-mono px-2.5 py-1 rounded border border-white/[0.1] whitespace-nowrap shadow-none pointer-events-none">Proxy</div>
       </div>
-    </aside>
-
-    <!-- Main Content Area -->
-    <main class="main-content">
-      <div class="views-viewport">
-        <!-- View 1: Dashboard -->
-        <section id="view-dashboard" class="view-section active">
-          <div class="dashboard-view">
-            <!-- Power Button -->
-            <div id="powerBtnSection" class="power-section disconnected">
-              <div class="power-btn-outer" id="powerBtn">
-                <div class="power-btn-ring"></div>
-                <div class="power-btn">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
-                    <line x1="12" y1="2" x2="12" y2="12"></line>
-                  </svg>
-                </div>
-              </div>
-              <div id="statusBadge" class="status-badge disconnected">
-                <div class="status-dot"></div>
-                <span id="statusText">Disconnected</span>
-              </div>
-            </div>
-
-            <!-- Metrics Grid -->
-            <div class="metrics-grid">
-              <div class="metric-card">
-                <div class="metric-label">
-                  <span>Latency</span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-                </div>
-                <div class="metric-value" id="metricLatency">-- ms</div>
-              </div>
-              <div class="metric-card">
-                <div class="metric-label">
-                  <span>Protocol</span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
-                </div>
-                <div class="metric-value" id="metricProtocol" style="font-size: 1.05rem;">MASQUE (H3)</div>
-              </div>
-              <div class="metric-card">
-                <div class="metric-label">
-                  <span>Uptime</span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                </div>
-                <div class="metric-value" id="metricUptime">00:00:00</div>
-              </div>
-            </div>
-
-            <!-- Exit Node Banner -->
-            <div class="exit-node-banner">
-              <div class="exit-node-info">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-emerald)"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                <div>
-                  <div style="font-weight: 600;" id="exitIp">Not connected</div>
-                  <div style="font-size: 0.76rem; color: var(--text-secondary);" id="exitColo">Cloudflare Edge</div>
-                </div>
-              </div>
-              <div class="exit-badge">WARP PROTECTED</div>
-            </div>
-          </div>
-        </section>
-
-        <!-- View 2: Protocols -->
-        <section id="view-protocols" class="view-section">
-          <div class="settings-panel">
-            <div class="panel-header">
-              <h2 class="panel-title">Transport Protocol</h2>
-              <p class="panel-desc">Select how Aether connects through restricted networks</p>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">Available Transports</div>
-              <div class="radio-cards-grid" id="protocolCards">
-                <div class="radio-card active" data-value="masque">
-                  <h4>MASQUE (HTTP/3)</h4>
-                  <p>QUIC over UDP. Recommended, fastest handshake and resilient to packet loss.</p>
-                </div>
-                <div class="radio-card" data-value="masque-h2">
-                  <h4>MASQUE (HTTP/2)</h4>
-                  <p>TLS over TCP. Appears as standard HTTPS web traffic. Use when UDP is throttled.</p>
-                </div>
-                <div class="radio-card" data-value="wg">
-                  <h4>WireGuard</h4>
-                  <p>Classic lean WireGuard tunnel. Fast and lightweight on open UDP networks.</p>
-                </div>
-                <div class="radio-card" data-value="gool">
-                  <h4>WARP-in-WARP (gool)</h4>
-                  <p>Two nested WireGuard layers. Bypasses single-hop WireGuard fingerprinting.</p>
-                </div>
-                <div class="radio-card" data-value="mim">
-                  <h4>MASQUE-in-MASQUE</h4>
-                  <p>Two nested MASQUE hops. Dialed from inside the edge for a different exit IP.</p>
-                </div>
-                <div class="radio-card" data-value="tor">
-                  <h4>Tor (Chain)</h4>
-                  <p>Tor carried inside the WARP tunnel. Your network never sees Tor traffic.</p>
-                </div>
-                <div class="radio-card" data-value="tor-reverse">
-                  <h4>Tor (Reverse)</h4>
-                  <p>Tunnel dialed through Tor on HTTP/2. WARP edge reached from a Tor exit.</p>
-                </div>
-                <div class="radio-card" data-value="tor-only">
-                  <h4>Tor Only</h4>
-                  <p>Direct Tor proxy with automated pluggable transport bridge fetching.</p>
-                </div>
-              </div>
-            </div>
-
-            <!-- MASQUE H2 Options -->
-            <div class="settings-card collapsed" id="masqueH2Options">
-              <div class="card-title">HTTP/2 TLS Fragmentation</div>
-              <div style="display: flex; align-items: center; justify-content: space-between;">
-                <div>
-                  <div style="font-weight: 500; font-size: 0.88rem;">Fragment TLS ClientHello</div>
-                  <div style="font-size: 0.78rem; color: var(--text-secondary);">Splits handshake packets to evade SNI inspection</div>
-                </div>
-                <label class="switch">
-                  <input type="checkbox" id="checkFragment">
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- View 3: Scanner & Noise -->
-        <section id="view-scanner" class="view-section">
-          <div class="settings-panel">
-            <div class="panel-header">
-              <h2 class="panel-title">Scanner &amp; Obfuscation</h2>
-              <p class="panel-desc">Configure endpoint discovery and deep packet inspection evasion</p>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">Scan Mode</div>
-              <div class="radio-cards-grid" id="scanModeCards">
-                <div class="radio-card" data-value="turbo">
-                  <h4>Turbo</h4>
-                  <p>Fastest. Connects to the first responsive verified gateway.</p>
-                </div>
-                <div class="radio-card active" data-value="balanced">
-                  <h4>Balanced (Default)</h4>
-                  <p>Tests multiple candidates and picks the lowest ping.</p>
-                </div>
-                <div class="radio-card" data-value="thorough">
-                  <h4>Thorough</h4>
-                  <p>Deep range sweep across subnets to find the lowest possible RTT.</p>
-                </div>
-                <div class="radio-card" data-value="stealth">
-                  <h4>Stealth</h4>
-                  <p>Slow, quiet probe cadence for networks monitoring port scans.</p>
-                </div>
-                <div class="radio-card" data-value="ironclad">
-                  <h4>Ironclad</h4>
-                  <p>Full tunnel + real HTTP request per candidate. Guaranteed working.</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">Obfuscation Noise Profile</div>
-              <div class="radio-cards-grid" id="noizeCards">
-                <div class="radio-card active" data-value="firewall">
-                  <h4>Firewall (Balanced)</h4>
-                  <p>Recommended. Pads handshakes with randomized decoy noise.</p>
-                </div>
-                <div class="radio-card" data-value="gfw">
-                  <h4>GFW (Aggressive)</h4>
-                  <p>Heavy packet-shaping and timing jitter for strict DPI.</p>
-                </div>
-                <div class="radio-card" data-value="light">
-                  <h4>Light</h4>
-                  <p>Minimal padding with minimal latency overhead.</p>
-                </div>
-                <div class="radio-card" data-value="off">
-                  <h4>Off</h4>
-                  <p>No packet padding or noise injection.</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">IP Address Family &amp; Override</div>
-              <div class="radio-cards-grid" id="ipFamilyCards" style="margin-bottom: 16px;">
-                <div class="radio-card active" data-value="v4">
-                  <h4>IPv4 Only</h4>
-                  <p>Recommended for most home and mobile connections.</p>
-                </div>
-                <div class="radio-card" data-value="both">
-                  <h4>Dual-Stack</h4>
-                  <p>Scans both IPv4 and IPv6 endpoints.</p>
-                </div>
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="inputPeer">Manual Endpoint Override (Optional)</label>
-                <input type="text" id="inputPeer" class="form-input" placeholder="e.g. 162.159.192.1:443 (skips scanning)">
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- View 4: Routing Rules -->
-        <section id="view-rules" class="view-section">
-          <div class="settings-panel">
-            <div class="panel-header">
-              <h2 class="panel-title">Routing Rules</h2>
-              <p class="panel-desc">Control which destinations bypass or get blocked by the tunnel</p>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">Direct Routes (Bypass Tunnel)</div>
-              <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px;">
-                Domains, IP CIDRs, or ports that connect directly outside the tunnel (e.g. banking, domestic sites, LAN).
-              </p>
-              <textarea id="inputRouteDirect" class="form-input form-textarea" placeholder="private, bank.ir, *.ir, port:25"></textarea>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">Blocked Routes</div>
-              <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px;">
-                Domains or IPs that are completely blocked locally.
-              </p>
-              <textarea id="inputRouteBlock" class="form-input form-textarea" placeholder="ads.example.com, keyword:telemetry"></textarea>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">Windows Proxy Bypass List</div>
-              <input type="text" id="inputBypass" class="form-input" value="&lt;local&gt;;localhost;127.*;10.*;192.168.*;172.16.*;*.ir">
-            </div>
-          </div>
-        </section>
-
-        <!-- View 5: Zero Trust -->
-        <section id="view-zerotrust" class="view-section">
-          <div class="settings-panel">
-            <div class="panel-header">
-              <h2 class="panel-title">Cloudflare Zero Trust</h2>
-              <p class="panel-desc">Enrol this client into a WARP for Teams organization</p>
-            </div>
-
-            <div class="settings-card">
-              <div class="form-group">
-                <label class="form-label" for="inputTeam">Organization Team Name</label>
-                <input type="text" id="inputTeam" class="form-input" placeholder="e.g. acme (from acme.cloudflareaccess.com)">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="inputAccessEmail">Access Email (for one-time login code)</label>
-                <input type="email" id="inputAccessEmail" class="form-input" placeholder="user@company.com">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="inputAccessToken">Pre-enrolled Access Token / JWT (Optional)</label>
-                <input type="password" id="inputAccessToken" class="form-input" placeholder="Paste JWT token here if available">
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- View 6: Settings -->
-        <section id="view-settings" class="view-section">
-          <div class="settings-panel">
-            <div class="panel-header">
-              <h2 class="panel-title">Client Settings</h2>
-              <p class="panel-desc">Configure proxy listener ports and upstream chaining</p>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">Local Proxy Ports</div>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                <div class="form-group">
-                  <label class="form-label" for="inputSocksPort">SOCKS5 Port</label>
-                  <input type="number" id="inputSocksPort" class="form-input" value="1819">
-                </div>
-                <div class="form-group">
-                  <label class="form-label" for="inputHttpPort">HTTP Proxy Port (Optional)</label>
-                  <input type="number" id="inputHttpPort" class="form-input" placeholder="e.g. 1820">
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-card">
-              <div class="card-title">Advanced Chaining &amp; DNS</div>
-              <div class="form-group">
-                <label class="form-label" for="inputUpstream">Upstream Proxy (Chain behind existing proxy)</label>
-                <input type="text" id="inputUpstream" class="form-input" placeholder="e.g. socks5://127.0.0.1:1080">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="inputDns">Custom DNS Resolvers</label>
-                <input type="text" id="inputDns" class="form-input" placeholder="e.g. 1.1.1.1, 1.0.0.1">
-              </div>
-            </div>
-          </div>
-        </section>
+      <div class="has-tooltip w-full flex justify-center">
+        <button id="nav-console" data-path="network-console" class="nav-rail-btn w-full h-11 flex items-center justify-center text-on-surface-variant border-l-2 border-transparent hover:bg-[#18181c] hover:text-on-surface transition-colors" type="button" aria-label="Console">
+          <span class="material-symbols-outlined text-[20px]">terminal</span>
+        </button>
+        <div class="tooltip-box absolute left-[64px] top-2 z-50 bg-[#1e1e24] text-on-surface text-[11px] font-mono px-2.5 py-1 rounded border border-white/[0.1] whitespace-nowrap shadow-none pointer-events-none">Console</div>
       </div>
+      <div class="has-tooltip w-full flex justify-center">
+        <button id="nav-settings" data-path="node-settings" class="nav-rail-btn w-full h-11 flex items-center justify-center text-on-surface-variant border-l-2 border-transparent hover:bg-[#18181c] hover:text-on-surface transition-colors" type="button" aria-label="Settings">
+          <span class="material-symbols-outlined text-[20px]">tune</span>
+        </button>
+        <div class="tooltip-box absolute left-[64px] top-2 z-50 bg-[#1e1e24] text-on-surface text-[11px] font-mono px-2.5 py-1 rounded border border-white/[0.1] whitespace-nowrap shadow-none pointer-events-none">Settings</div>
+      </div>
+    </nav>
+    <div class="flex flex-col items-center pb-1 has-tooltip">
+      <div id="rail-status-dot" class="w-2 h-2 rounded-full bg-outline transition-colors" title="Loopback Adapter Status"></div>
+      <div class="tooltip-box absolute left-[64px] bottom-1 z-50 bg-[#1e1e24] text-on-surface text-[11px] font-mono px-2.5 py-1 rounded border border-white/[0.1] whitespace-nowrap shadow-none pointer-events-none">
+        <span id="rail-tooltip-text">Aether Service Ready</span>
+      </div>
+    </div>
+  </aside>
 
-      <!-- Collapsible Console Drawer -->
-      <div id="consoleDrawer" class="console-drawer">
-        <div id="consoleHeader" class="console-header">
-          <div class="console-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
-            <span>Live Output Console</span>
-          </div>
-          <div class="console-actions">
-            <button id="clearLogsBtn" class="btn-icon" title="Clear logs">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+  <!-- Main View Area (pl-[60px] pt-[38px]) -->
+  <div class="pl-[60px]">
+    <main class="relative w-full pt-[38px] min-h-screen bg-[#0d0d0f] overflow-hidden">
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 1: PROXY CONTROL (DASHBOARD) -->
+      <!-- ========================================================================= -->
+      <div id="view-proxy" class="view-pane flex flex-col w-full min-h-[calc(100vh-38px)] justify-between items-center p-6 z-10 select-none">
+        <!-- Subtle Hardware Vignette Background Layer -->
+        <div class="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_46%,#16161c_0%,#0d0d0f_75%)] opacity-80"></div>
+
+        <!-- Center Control Focal Zone -->
+        <section class="flex flex-col items-center justify-center my-auto w-full max-w-lg z-10">
+          <!-- Focal Element: 156px True Circle Hardware Core -->
+          <div class="relative flex items-center justify-center my-4">
+            <!-- One-shot Ripple Effect on Connected -->
+            <div id="ripple-ring" class="absolute w-[156px] h-[156px] rounded-full border-2 border-secondary pointer-events-none opacity-0"></div>
+            <!-- Outer Ambient Glow Accent -->
+            <div id="ring-glow" class="absolute w-[172px] h-[172px] rounded-full transition-all duration-300 bg-[#303036]/20 animate-breathe"></div>
+            <!-- The 156px Master Dial Button -->
+            <button id="main-dial-btn" aria-label="Toggle Core Encrypted Tunnel" class="relative w-[156px] h-[156px] rounded-full bg-[#111114] flex items-center justify-center cursor-pointer transition-all duration-200 outline-none select-none border-2 border-[#303036] active:scale-95" type="button">
+              <!-- State Icons -->
+              <!-- 1. Connected: Checkmark -->
+              <svg id="icon-connected" class="w-12 h-12 text-[#2dd4bf] stroke-[2] hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M4.5 12.75l6 6 9-13.5" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
+              <!-- 2. Connecting / Scanning: Precision Spinner -->
+              <svg id="icon-connecting" class="w-12 h-12 text-primary-container stroke-[1.75] animate-spin hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
+              <!-- 3. Idle: Power Icon -->
+              <svg id="icon-idle" class="w-12 h-12 text-outline stroke-[1.75]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M5.636 5.636a9 9 0 1012.728 0M12 3v9" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
+              <!-- 4. Error: Alert Warning -->
+              <svg id="icon-error" class="w-12 h-12 text-[#ef4444] stroke-[1.75] hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
             </button>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="18 15 12 9 6 15"></polyline></svg>
+          </div>
+
+          <!-- Telemetry Readout -->
+          <div class="flex flex-col items-center text-center mt-2">
+            <p id="status-primary" class="text-[16px] text-on-surface font-normal">
+              <span class="text-outline">Engine Standby</span>
+            </p>
+            <p id="status-secondary" class="text-[12px] font-mono text-outline mt-0.5 tracking-tight uppercase">
+              TUNNEL DEACTIVATED
+            </p>
+          </div>
+
+          <!-- Progressive Disclosure "Details" Drawer -->
+          <div class="mt-4 flex flex-col items-center w-full">
+            <button id="details-toggle-btn" class="text-[11px] font-mono text-outline hover:text-on-surface flex items-center gap-1 transition-colors px-2 py-1 rounded hover:bg-[#18181c]" type="button">
+              <span>Details</span>
+              <span id="details-chevron" class="material-symbols-outlined text-[14px] transition-transform duration-200">expand_more</span>
+            </button>
+            <!-- Drawer Content -->
+            <div id="details-drawer" class="w-full max-w-sm mt-2 flex flex-col border border-[#222227] rounded bg-[#111114] p-3 hidden">
+              <div class="flex items-center justify-between py-1">
+                <span class="text-[12px] text-outline">Local SOCKS5 Ingress</span>
+                <span id="dt-socks" class="text-[12px] text-on-surface font-mono">127.0.0.1:1819</span>
+              </div>
+              <div class="h-px w-full bg-[#222227] my-1"></div>
+              <div class="flex items-center justify-between py-1">
+                <span class="text-[12px] text-outline">Egress Protocol</span>
+                <span id="dt-proto" class="text-[12px] text-on-surface font-mono">MASQUE HTTP/3 <span class="text-outline text-[10px]">(QUIC)</span></span>
+              </div>
+              <div class="h-px w-full bg-[#222227] my-1"></div>
+              <div class="flex items-center justify-between py-1">
+                <span class="text-[12px] text-outline">Public Egress IP</span>
+                <span id="dt-exit" class="text-[12px] text-on-surface font-mono">-- <span class="text-outline text-[10px]">(Anycast)</span></span>
+              </div>
+              <div class="h-px w-full bg-[#222227] my-1"></div>
+              <div class="flex items-center justify-between py-1">
+                <span class="text-[12px] text-outline">Cipher</span>
+                <span id="dt-cipher" class="text-[12px] text-on-surface font-mono">ChaCha20-Poly1305</span>
+              </div>
+              <div class="h-px w-full bg-[#222227] my-1"></div>
+              <div class="flex items-center justify-between py-1">
+                <span class="text-[12px] text-outline">MTU Payload</span>
+                <span id="dt-mtu" class="text-[12px] text-on-surface font-mono">1280 Bytes</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Compact Active Engine Readout Footer -->
+        <footer class="w-full max-w-xl mb-2 flex flex-col items-center z-10">
+          <div class="w-full px-4 py-2.5 rounded bg-[#141417] border border-[#222227] flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-[16px] text-outline">tune</span>
+              <span class="text-[11px] font-mono text-on-surface">
+                <span class="text-outline">Active Engine:</span> <span id="ft-active-engine">MASQUE · Balanced Scan</span>
+              </span>
+            </div>
+            <button id="ft-edit-settings" class="text-[11px] font-mono text-[#f2711c] hover:text-[#ffb691] flex items-center gap-1 transition-colors" type="button">
+              <span>Edit in Settings</span>
+              <span class="material-symbols-outlined text-[13px]">arrow_forward</span>
+            </button>
+          </div>
+        </footer>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 2: NETWORK CONSOLE -->
+      <!-- ========================================================================= -->
+      <div id="view-console" class="view-pane hidden flex flex-col w-full h-[calc(100vh-38px)] p-3">
+        <div class="flex flex-col flex-1 bg-[#09090b] rounded-lg border border-white/[0.07] overflow-hidden">
+          <!-- Header Row -->
+          <div class="flex items-center justify-between px-4 py-2.5 bg-[#111114] border-b border-white/[0.07]">
+            <div class="flex items-center gap-2.5">
+              <h1 class="text-[15px] font-semibold tracking-tight text-on-surface">Console</h1>
+              <div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-black/40 border border-white/[0.06]">
+                <span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+                <span class="text-[10px] font-mono text-on-surface-variant lowercase tracking-wide">live</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="console-copy-btn" class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#18181c] hover:bg-[#222226] text-on-surface-variant hover:text-on-surface border border-white/[0.06] transition-colors" type="button">
+                <span class="material-symbols-outlined text-[14px]">content_copy</span>
+                <span id="console-copy-text" class="text-[11px] font-mono font-medium">Copy</span>
+              </button>
+              <button id="console-clear-btn" class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#18181c] hover:bg-[#222226] text-on-surface-variant hover:text-error border border-white/[0.06] transition-colors" type="button">
+                <span class="material-symbols-outlined text-[14px]">delete</span>
+                <span class="text-[11px] font-mono font-medium">Clear</span>
+              </button>
+            </div>
+          </div>
+          <!-- Terminal Content Area -->
+          <div id="console-log-feed" class="flex-1 overflow-y-auto p-3.5 font-mono text-[12px] bg-[#09090b] select-text space-y-1">
+            <div class="flex items-start gap-2 leading-relaxed px-1 py-0.5 rounded">
+              <span class="text-outline shrink-0 font-mono">00:00:00.000</span>
+              <span class="font-semibold text-outline shrink-0 font-mono">[SYS]</span>
+              <span class="text-on-surface font-mono">Aether Desktop Daemon initialized (v2.0.0-win64)</span>
+            </div>
+          </div>
+          <!-- Quiet Footer Strip -->
+          <div class="flex items-center justify-between px-4 py-1.5 bg-[#111114] border-t border-white/[0.07] select-none">
+            <div class="flex items-center gap-2">
+              <span class="relative flex h-2 w-2">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span>
+              </span>
+              <span class="text-[11px] font-mono text-on-surface-variant font-medium">Listening</span>
+            </div>
+            <span id="console-event-counter" class="text-[11px] font-mono text-outline">1 event recorded</span>
           </div>
         </div>
-        <div id="consoleLogs" class="console-logs"></div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 3: SETTINGS (BASIC & ADVANCED) -->
+      <!-- ========================================================================= -->
+      <div id="view-settings" class="view-pane hidden flex flex-col w-full h-[calc(100vh-38px)] overflow-y-auto px-8 py-6 text-on-surface">
+        <div class="flex flex-col w-full max-w-3xl mx-auto pb-12">
+          <!-- Header with Basic/Advanced Tabs -->
+          <div class="flex flex-col pb-4 mb-6 border-b border-[#222227] gap-3">
+            <div class="flex items-end justify-between">
+              <div class="flex flex-col gap-0.5">
+                <span class="text-[10px] font-mono tracking-widest text-[#f2711c] uppercase font-semibold">Configuration</span>
+                <h1 class="text-[22px] font-semibold tracking-tight text-on-surface">Settings</h1>
+              </div>
+              <!-- Segmented Tab Bar -->
+              <div class="flex items-center gap-1 bg-[#1b1b1e] p-1 rounded-lg border border-[#222227]" role="tablist">
+                <button id="tab-btn-basic" aria-selected="true" class="px-3.5 py-1.5 rounded-md text-[11px] font-mono bg-[#24242a] text-on-surface border border-[#353438] font-medium transition-colors" type="button">Basic</button>
+                <button id="tab-btn-advanced" aria-selected="false" class="px-3.5 py-1.5 rounded-md text-[11px] font-mono text-on-surface-variant hover:text-on-surface transition-colors" type="button">Advanced</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB CONTENT: BASIC -->
+          <div id="tab-content-basic" class="space-y-6">
+            <!-- CONNECTION SECTION -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">CONNECTION</span>
+
+              <!-- Protocol -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Protocol</span>
+                  <span class="text-[12px] text-on-surface-variant">L4 tunnel framing and transport protocol</span>
+                </div>
+                <div class="relative min-w-[240px] custom-dropdown" id="dropdown-proto-wrapper">
+                  <button id="btn-proto" class="w-full bg-[#18181c] hover:bg-[#222228] border border-[#2d2d35] text-on-surface text-[12px] font-mono px-3 py-2 rounded-lg flex items-center justify-between transition-colors" type="button">
+                    <span id="label-proto" class="font-medium">MASQUE (HTTP/3)</span>
+                    <svg class="w-3.5 h-3.5 text-on-surface-variant pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </button>
+                  <div id="panel-proto" class="dropdown-panel absolute right-0 top-full mt-1 w-full bg-[#1a1a1e] border border-[#2d2d35] rounded-lg p-1 z-30 flex flex-col gap-0.5">
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface bg-[#2a2a32] cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="masque">
+                      <span>MASQUE (HTTP/3)</span>
+                      <span class="material-symbols-outlined text-[14px] text-[#f2711c]">check</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="masque-h2">
+                      <span>MASQUE (HTTP/2 - TCP)</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="wg">
+                      <span>WireGuard</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="gool">
+                      <span>WARP-in-WARP (gool)</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="mim">
+                      <span>MASQUE-in-MASQUE</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Scan mode -->
+              <div class="flex flex-col lg:flex-row lg:items-center justify-between py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Scan mode</span>
+                  <span class="text-[12px] text-on-surface-variant">Endpoint latency probing strategy</span>
+                </div>
+                <div id="scan-mode-group" class="inline-flex p-0.5 rounded-lg bg-[#141417] border border-[#222227]" role="group">
+                  <button data-scan="turbo" class="px-3 py-1 rounded text-[11px] font-mono text-on-surface-variant hover:text-on-surface transition-colors" type="button">Turbo</button>
+                  <button data-scan="balanced" class="px-3 py-1 rounded text-[11px] font-mono bg-[#24242a] text-[#ffb691] font-medium transition-colors" type="button">Balanced</button>
+                  <button data-scan="thorough" class="px-3 py-1 rounded text-[11px] font-mono text-on-surface-variant hover:text-on-surface transition-colors" type="button">Thorough</button>
+                  <button data-scan="stealth" class="px-3 py-1 rounded text-[11px] font-mono text-on-surface-variant hover:text-on-surface transition-colors" type="button">Stealth</button>
+                  <button data-scan="ironclad" class="px-3 py-1 rounded text-[11px] font-mono text-on-surface-variant hover:text-on-surface transition-colors" type="button">Ironclad</button>
+                </div>
+              </div>
+
+              <!-- Obfuscation Profile -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Obfuscation profile</span>
+                  <span class="text-[12px] text-on-surface-variant">Header and padding traffic randomization against DPI</span>
+                </div>
+                <div class="relative min-w-[240px] custom-dropdown" id="dropdown-obfs-wrapper">
+                  <button id="btn-obfs" class="w-full bg-[#18181c] hover:bg-[#222228] border border-[#2d2d35] text-on-surface text-[12px] font-mono px-3 py-2 rounded-lg flex items-center justify-between transition-colors" type="button">
+                    <span id="label-obfs" class="font-medium">Firewall</span>
+                    <svg class="w-3.5 h-3.5 text-on-surface-variant pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </button>
+                  <div id="panel-obfs" class="dropdown-panel absolute right-0 top-full mt-1 w-full bg-[#1a1a1e] border border-[#2d2d35] rounded-lg p-1 z-30 flex flex-col gap-0.5">
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="off">
+                      <span>Off</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="light">
+                      <span>Light</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface bg-[#2a2a32] cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="firewall">
+                      <span>Firewall (Recommended)</span>
+                      <span class="material-symbols-outlined text-[14px] text-[#f2711c]">check</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="balanced">
+                      <span>Balanced</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="gfw">
+                      <span>GFW (Aggressive)</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="aggressive">
+                      <span>Aggressive</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bind Address -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-bind">Bind address</label>
+                  <span class="text-[12px] text-on-surface-variant">Local SOCKS5 proxy listen port</span>
+                </div>
+                <div class="w-full sm:w-64">
+                  <input id="cfg-bind" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" value="127.0.0.1:1819" spellcheck="false"/>
+                </div>
+              </div>
+
+              <!-- DNS Resolvers -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-dns">DNS resolvers</label>
+                  <span class="text-[12px] text-on-surface-variant">Custom upstream DNS endpoints</span>
+                </div>
+                <div class="w-full sm:w-64">
+                  <input id="cfg-dns" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" value="1.1.1.1, 1.0.0.1" spellcheck="false"/>
+                </div>
+              </div>
+            </div>
+
+            <!-- SYSTEM SECTION -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">SYSTEM</span>
+
+              <!-- Auto System Proxy -->
+              <div class="flex items-center justify-between py-3 border-b border-[#222227]">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Automatic Windows System Proxy</span>
+                  <span class="text-[12px] text-on-surface-variant">Points Windows and browsers directly to 127.0.0.1:1819 on connect</span>
+                </div>
+                <button id="toggle-sysproxy" aria-checked="true" class="w-10 h-5 rounded-full bg-[#f2711c] p-0.5 transition-colors focus:outline-none flex items-center justify-end" role="switch" type="button">
+                  <div class="w-4 h-4 rounded-full bg-[#0d0d0f] transition-transform"></div>
+                </button>
+              </div>
+
+              <!-- Launch at startup -->
+              <div class="flex items-center justify-between py-3 border-b border-[#222227]">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Launch at startup</span>
+                  <span class="text-[12px] text-on-surface-variant">Start Aether when logging into Windows</span>
+                </div>
+                <button id="toggle-startup" aria-checked="false" class="w-10 h-5 rounded-full bg-[#222228] p-0.5 transition-colors focus:outline-none flex items-center justify-start" role="switch" type="button">
+                  <div class="w-4 h-4 rounded-full bg-[#393944] transition-transform"></div>
+                </button>
+              </div>
+
+              <!-- Start Minimized -->
+              <div class="flex items-center justify-between py-3 border-b border-[#222227]">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Start minimized to tray</span>
+                  <span class="text-[12px] text-on-surface-variant">Run in background without popping up window</span>
+                </div>
+                <button id="toggle-minimized" aria-checked="false" class="w-10 h-5 rounded-full bg-[#222228] p-0.5 transition-colors focus:outline-none flex items-center justify-start" role="switch" type="button">
+                  <div class="w-4 h-4 rounded-full bg-[#393944] transition-transform"></div>
+                </button>
+              </div>
+
+              <!-- Close to Tray -->
+              <div class="flex items-center justify-between py-3 border-b border-[#222227]">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Close to tray instead of quitting</span>
+                  <span class="text-[12px] text-on-surface-variant">Keep proxy alive when clicking window close button</span>
+                </div>
+                <button id="toggle-closetray" aria-checked="true" class="w-10 h-5 rounded-full bg-[#f2711c] p-0.5 transition-colors focus:outline-none flex items-center justify-end" role="switch" type="button">
+                  <div class="w-4 h-4 rounded-full bg-[#0d0d0f] transition-transform"></div>
+                </button>
+              </div>
+            </div>
+
+            <!-- SOFTWARE UPDATES SECTION -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">SOFTWARE UPDATES</span>
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Client release</span>
+                  <div class="flex items-center gap-2 mt-0.5">
+                    <span class="text-[11px] font-mono text-on-surface">v2.0.0</span>
+                    <span class="text-[10px] font-mono text-[#2dd4bf] bg-[#2dd4bf]/15 border border-[#2dd4bf]/30 px-1.5 py-0.2 rounded font-medium inline-flex items-center gap-1">
+                      <span class="material-symbols-outlined text-[11px]">check</span> Up to date
+                    </span>
+                  </div>
+                </div>
+                <button id="btn-check-updates" class="bg-[#18181c] hover:bg-[#222228] border border-[#2d2d35] text-on-surface text-[11px] font-mono px-3.5 py-1.5 rounded-lg inline-flex items-center gap-2 transition-colors active:scale-95" type="button">
+                  <span id="icon-check-updates" class="material-symbols-outlined text-[15px] text-[#8e8e98]">sync</span>
+                  <span id="text-check-updates">Check for updates</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Footer: Restore defaults -->
+            <div class="flex items-center justify-between pt-3">
+              <button id="btn-restore-basic" class="text-[12px] text-[#8e8e98] hover:text-[#ffb691] transition-colors underline underline-offset-4 decoration-[#24242a]" type="button">
+                Restore defaults
+              </button>
+              <div class="flex items-center gap-2 text-[11px] font-mono text-[#8e8e98]">
+                <span class="w-1.5 h-1.5 rounded-full bg-[#2dd4bf] animate-pulse"></span>
+                <span>Service responsive</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB CONTENT: ADVANCED -->
+          <div id="tab-content-advanced" class="space-y-6 hidden">
+            <!-- TUNNEL MODE SECTION (SYSTEM-WIDE TUN PROXY) -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">TUNNEL MODE</span>
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Tunnel routing mode</span>
+                  <span class="text-[12px] text-on-surface-variant">Proxy mode routes configured apps. System-wide routes all Windows browsers and apps through the tunnel.</span>
+                </div>
+                <div class="flex flex-col items-end gap-1">
+                  <div class="inline-flex bg-[#141417] p-0.5 rounded-lg border border-[#222227]" id="tunnel-mode-group">
+                    <button data-mode="proxy" class="px-3.5 py-1.5 rounded-md text-xs font-medium bg-[#222228] text-on-surface border border-[#393944]/50 transition-colors" type="button">Proxy (SOCKS5)</button>
+                    <button data-mode="system-wide" class="px-3.5 py-1.5 rounded-md text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors" type="button">System-wide (TUN)</button>
+                  </div>
+                  <span id="tunnel-mode-hint" class="text-[10px] text-[#2dd4bf] font-mono">Loopback proxy active on 127.0.0.1:1819</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- TOR SECTION -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">TOR</span>
+              <!-- Tor Switch -->
+              <div class="flex flex-col py-3 border-b border-[#222227] gap-3">
+                <div class="flex items-center justify-between">
+                  <div class="flex flex-col pr-4 max-w-md">
+                    <span class="text-[13px] font-medium text-on-surface">Tor Integration</span>
+                    <span class="text-[12px] text-on-surface-variant">Route traffic through the Tor onion network (built-in arti)</span>
+                  </div>
+                  <button id="toggle-tor" aria-checked="false" class="w-10 h-5 rounded-full bg-[#222228] p-0.5 transition-colors focus:outline-none flex items-center justify-start" role="switch" type="button">
+                    <div class="w-4 h-4 rounded-full bg-[#393944] transition-transform"></div>
+                  </button>
+                </div>
+                <!-- Tor Sub-options -->
+                <div id="tor-sub-options" class="flex flex-col gap-2 pl-4 py-1 border-l-2 border-[#222227] ml-1 opacity-40 pointer-events-none transition-opacity duration-150">
+                  <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input checked class="accent-[#f2711c] w-3.5 h-3.5 cursor-pointer bg-[#18181c]" name="tor-mode" type="radio" value="carry"/>
+                    <span class="text-[12px] text-on-surface">Carry Tor inside the WARP tunnel (default)</span>
+                  </label>
+                  <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input class="accent-[#f2711c] w-3.5 h-3.5 cursor-pointer bg-[#18181c]" name="tor-mode" type="radio" value="reach"/>
+                    <span class="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors">Reach the WARP tunnel through Tor</span>
+                  </label>
+                  <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input class="accent-[#f2711c] w-3.5 h-3.5 cursor-pointer bg-[#18181c]" name="tor-mode" type="radio" value="tor-only"/>
+                    <span class="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors">Tor only, no WARP tunnel</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Bridges switch -->
+              <div class="flex items-center justify-between py-3 border-b border-[#222227]">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Use bridges automatically</span>
+                  <span class="text-[12px] text-on-surface-variant">Enables obfs4 and pluggable transport bridges on restricted networks</span>
+                </div>
+                <button id="toggle-tor-bridges" aria-checked="false" class="w-10 h-5 rounded-full bg-[#222228] p-0.5 transition-colors focus:outline-none flex items-center justify-start" role="switch" type="button">
+                  <div class="w-4 h-4 rounded-full bg-[#393944] transition-transform"></div>
+                </button>
+              </div>
+
+              <!-- Bridge Region -->
+              <div id="bridge-region-row" class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-2 opacity-50 pointer-events-none transition-opacity duration-150">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Bridge region</span>
+                  <span class="text-[12px] text-on-surface-variant">Which country's bridges to request (Geo-optimized)</span>
+                </div>
+                <div class="relative min-w-[240px] custom-dropdown" id="dropdown-bridge-wrapper">
+                  <button id="btn-bridge" class="w-full bg-[#18181c] hover:bg-[#222228] border border-[#2d2d35] text-on-surface text-[12px] font-mono px-3 py-2 rounded-lg flex items-center justify-between transition-colors" type="button">
+                    <span id="label-bridge" class="font-medium">🌐 Auto-detect</span>
+                    <svg class="w-3.5 h-3.5 text-on-surface-variant pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </button>
+                  <div id="panel-bridge" class="dropdown-panel absolute right-0 top-full mt-1 w-full bg-[#1a1a1e] border border-[#2d2d35] rounded-lg p-1 z-30 flex flex-col gap-0.5">
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface bg-[#2a2a32] cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="auto">
+                      <span>🌐 Auto-detect</span>
+                      <span class="material-symbols-outlined text-[14px] text-[#f2711c]">check</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="ir">
+                      <span>🇮🇷 Iran</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="cn">
+                      <span>🇨🇳 China</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="ru">
+                      <span>🇷🇺 Russia</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ZERO TRUST SECTION -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">ZERO TRUST</span>
+              <!-- Team name -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-team">Team name</label>
+                  <span class="text-[12px] text-on-surface-variant">Cloudflare Zero Trust organization slug</span>
+                </div>
+                <div class="w-full sm:w-64">
+                  <input id="cfg-team" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" placeholder="acme" spellcheck="false" type="text"/>
+                </div>
+              </div>
+
+              <!-- Auth method -->
+              <div class="flex flex-col py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div class="flex flex-col pr-4 max-w-md">
+                    <span class="text-[13px] font-medium text-on-surface">Authentication method</span>
+                    <span class="text-[12px] text-on-surface-variant">Team device enrollment credentials</span>
+                  </div>
+                  <div class="relative min-w-[240px] custom-dropdown" id="dropdown-auth-wrapper">
+                    <button id="btn-auth" class="w-full bg-[#18181c] hover:bg-[#222228] border border-[#2d2d35] text-on-surface text-[12px] font-mono px-3 py-2 rounded-lg flex items-center justify-between transition-colors" type="button">
+                      <span id="label-auth" class="font-medium">Service token</span>
+                      <svg class="w-3.5 h-3.5 text-on-surface-variant pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                    <div id="panel-auth" class="dropdown-panel absolute right-0 top-full mt-1 w-full bg-[#1a1a1e] border border-[#2d2d35] rounded-lg p-1 z-30 flex flex-col gap-0.5">
+                      <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface bg-[#2a2a32] cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="service">
+                        <span>Service token</span>
+                        <span class="material-symbols-outlined text-[14px] text-[#f2711c]">check</span>
+                      </div>
+                      <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="email">
+                        <span>Email code</span>
+                      </div>
+                      <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="access">
+                        <span>Access token (JWT)</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Conditional Auth Fields -->
+                <div id="auth-conditional-fields" class="pl-4 py-1 border-l-2 border-[#222227] ml-1 flex flex-col gap-3">
+                  <!-- Service token sub-fields -->
+                  <div id="auth-fields-service" class="flex flex-col sm:flex-row gap-3">
+                    <div class="flex-1 flex flex-col gap-1">
+                      <label class="text-[11px] font-medium text-on-surface-variant" for="auth-client-id">Client ID</label>
+                      <input id="auth-client-id" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" placeholder="e.g. 6a82..." spellcheck="false" type="text"/>
+                    </div>
+                    <div class="flex-1 flex flex-col gap-1">
+                      <label class="text-[11px] font-medium text-on-surface-variant" for="auth-client-secret">Client Secret</label>
+                      <input id="auth-client-secret" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" placeholder="e.g. 9b4f..." spellcheck="false" type="password"/>
+                    </div>
+                  </div>
+                  <!-- Email code sub-field -->
+                  <div id="auth-fields-email" class="hidden flex-col gap-1">
+                    <label class="text-[11px] font-medium text-on-surface-variant" for="auth-email">Email address</label>
+                    <input id="auth-email" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" placeholder="name@organization.com" spellcheck="false" type="email"/>
+                  </div>
+                  <!-- Access token sub-field -->
+                  <div id="auth-fields-access" class="hidden flex-col gap-1">
+                    <label class="text-[11px] font-medium text-on-surface-variant" for="auth-access-token">Access token (JWT)</label>
+                    <input id="auth-access-token" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" placeholder="eyJhbGciOi..." spellcheck="false" type="text"/>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ROUTING SECTION -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">ROUTING</span>
+              <!-- Never route through tunnel -->
+              <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-bypass">Never route through tunnel (Bypass)</label>
+                  <span class="text-[12px] text-on-surface-variant">Domains or IP ranges bypassing the tunnel (e.g. Iranian sites, bank.ir, LAN)</span>
+                </div>
+                <div class="w-full md:w-80">
+                  <textarea id="cfg-bypass" rows="2" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60 resize-none leading-relaxed" spellcheck="false">&lt;local&gt;;localhost;127.*;10.*;192.168.*;172.16.*;*.ir;bank.ir</textarea>
+                </div>
+              </div>
+              <!-- Always route through tunnel -->
+              <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-force">Always route through tunnel (Force)</label>
+                  <span class="text-[12px] text-on-surface-variant">Domains or IP ranges explicitly forced through proxy</span>
+                </div>
+                <div class="w-full md:w-80">
+                  <textarea id="cfg-force" rows="2" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60 resize-none leading-relaxed" placeholder="10.0.0.0/8, corp.internal" spellcheck="false"></textarea>
+                </div>
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="flex items-center justify-between pt-3">
+              <button id="btn-restore-advanced" class="text-[12px] text-[#8e8e98] hover:text-[#ffb691] transition-colors underline underline-offset-4 decoration-[#24242a]" type="button">
+                Restore defaults
+              </button>
+              <div class="flex items-center gap-2 text-[11px] font-mono text-[#8e8e98]">
+                <span class="w-1.5 h-1.5 rounded-full bg-[#2dd4bf] animate-pulse"></span>
+                <span>Service responsive</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   </div>
 
+  <!-- Custom Software Update Modal Dialog -->
+  <div id="update-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 hidden opacity-0">
+    <div id="update-modal-dialog" class="bg-[#18181c] border border-[#2d2d35] rounded-xl w-full max-w-md p-6 relative flex flex-col scale-95">
+      <button aria-label="Close dialog" id="update-modal-close" class="absolute top-4 right-4 text-[#8e8e98] hover:text-on-surface transition-colors p-1 rounded hover:bg-[#222228]" type="button">
+        <span class="material-symbols-outlined text-[18px]">close</span>
+      </button>
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-8 h-8 rounded-lg bg-[#f2711c]/15 border border-[#f2711c]/30 flex items-center justify-center">
+          <span class="material-symbols-outlined text-[18px] text-[#f2711c]">system_update</span>
+        </div>
+        <div>
+          <h3 class="text-[16px] font-semibold text-on-surface">Aether is Up to Date</h3>
+          <p class="text-[12px] font-mono text-[#2dd4bf]">v2.0.0 (Latest version installed)</p>
+        </div>
+      </div>
+      <div class="my-3 py-3 border-y border-[#24242a]">
+        <span class="text-[10px] font-mono tracking-wider text-[#8e8e98] uppercase block mb-2 font-semibold">Features Loaded</span>
+        <ul class="flex flex-col gap-1.5 text-[12px] text-on-surface-variant">
+          <li class="flex items-start gap-2">
+            <span class="text-[#f2711c] font-bold">•</span>
+            <span>MASQUE over HTTP/3 and HTTP/2 (TCP)</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-[#f2711c] font-bold">•</span>
+            <span>Precision Instrument Desktop UI with System-wide Proxy</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-[#f2711c] font-bold">•</span>
+            <span>Sub-50ms verified Anycast edge routes</span>
+          </li>
+        </ul>
+      </div>
+      <div class="flex items-center justify-end gap-2.5 mt-2">
+        <button id="update-modal-ok" class="px-4 py-2 rounded-lg text-[12px] font-mono bg-[#f2711c] hover:bg-[#ff7b29] text-[#0d0d0f] font-semibold transition-colors" type="button">
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JavaScript Application Entry Point -->
   <script type="module" src="./js/app.js"></script>
 </body>
 </html>

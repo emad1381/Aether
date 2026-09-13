@@ -65,6 +65,30 @@ pub struct TunnelConfig {
     #[serde(default)]
     pub route_block: Option<String>,
 
+    #[serde(default = "default_tunnel_mode")]
+    pub tunnel_mode: String, // "proxy" or "system-wide"
+
+    #[serde(default)]
+    pub tor_enabled: bool,
+
+    #[serde(default = "default_tor_mode")]
+    pub tor_mode: String, // "carry", "reach", "tor-only"
+
+    #[serde(default)]
+    pub tor_bridges: bool,
+
+    #[serde(default)]
+    pub tor_country: Option<String>,
+
+    #[serde(default)]
+    pub launch_at_startup: bool,
+
+    #[serde(default)]
+    pub start_minimized: bool,
+
+    #[serde(default = "default_true")]
+    pub close_to_tray: bool,
+
     #[serde(default)]
     pub team: Option<String>,
 
@@ -102,6 +126,12 @@ fn default_keepalive() -> u16 {
 fn default_true() -> bool {
     true
 }
+fn default_tunnel_mode() -> String {
+    "proxy".to_string()
+}
+fn default_tor_mode() -> String {
+    "carry".to_string()
+}
 fn default_bypass_list() -> String {
     "<local>;localhost;127.*;10.*;192.168.*;172.16.*;*.ir".to_string()
 }
@@ -111,7 +141,7 @@ impl Default for TunnelConfig {
         Self {
             protocol: default_protocol(),
             socks_port: default_socks_port(),
-            http_port: None,
+            http_port: Some(1820),
             scan_mode: default_scan_mode(),
             ip_family: default_ip_family(),
             noize: default_noize(),
@@ -130,6 +160,14 @@ impl Default for TunnelConfig {
             bypass_list: default_bypass_list(),
             route_direct: None,
             route_block: None,
+            tunnel_mode: default_tunnel_mode(),
+            tor_enabled: false,
+            tor_mode: default_tor_mode(),
+            tor_bridges: false,
+            tor_country: None,
+            launch_at_startup: false,
+            start_minimized: false,
+            close_to_tray: true,
             team: None,
             access_email: None,
             access_token: None,

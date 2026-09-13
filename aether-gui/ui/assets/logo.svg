@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <radialGradient id="bgGlow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#161b26"/>
+      <stop offset="100%" stop-color="#070a0f"/>
+    </radialGradient>
+
+    <!-- Metallic Titanium Gradient -->
+    <linearGradient id="metalDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3a404d"/>
+      <stop offset="50%" stop-color="#1a1e26"/>
+      <stop offset="100%" stop-color="#0e1219"/>
+    </linearGradient>
+
+    <linearGradient id="metalLight" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="30%" stop-color="#d1d7e0"/>
+      <stop offset="70%" stop-color="#8c96a5"/>
+      <stop offset="100%" stop-color="#4f5968"/>
+    </linearGradient>
+
+    <!-- Glowing Core Orange/Amber Gradient -->
+    <radialGradient id="emberCore" cx="50%" cy="55%" r="45%">
+      <stop offset="0%" stop-color="#ffe8a3"/>
+      <stop offset="35%" stop-color="#ff9100"/>
+      <stop offset="75%" stop-color="#e65100"/>
+      <stop offset="100%" stop-color="#bf360c"/>
+    </radialGradient>
+
+    <!-- Swoosh Highlight -->
+    <linearGradient id="swooshGrad" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#9ea7b3"/>
+      <stop offset="40%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#a4aebd"/>
+    </linearGradient>
+
+    <!-- Outer Rim Bevel -->
+    <linearGradient id="rimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#64748b"/>
+      <stop offset="50%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="coreGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Outer Rounded Tile Container -->
+  <rect x="24" y="24" width="464" height="464" rx="100" fill="url(#bgGlow)" stroke="url(#rimGrad)" stroke-width="6"/>
+  <rect x="30" y="30" width="452" height="452" rx="94" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
+
+  <!-- Core Ambient Glow Behind Logo -->
+  <circle cx="256" cy="270" r="110" fill="#ff6d00" opacity="0.18" filter="url(#coreGlow)"/>
+
+  <!-- Main Metallic "A" Geometry -->
+  <g transform="translate(0, -6)">
+    <!-- Inner Glowing Core Triangle -->
+    <polygon points="256,170 196,305 316,305" fill="url(#emberCore)" filter="url(#coreGlow)"/>
+    <polygon points="256,195 214,295 298,295" fill="#fff" opacity="0.25"/>
+
+    <!-- Left Leg Outer Facet -->
+    <polygon points="256,92 108,376 172,376 256,215" fill="url(#metalLight)"/>
+    <!-- Left Leg Inner Dark Bevel -->
+    <polygon points="256,92 256,215 196,330 172,376" fill="url(#metalDark)"/>
+
+    <!-- Right Leg Outer Facet -->
+    <polygon points="256,92 404,376 340,376 256,215" fill="url(#metalLight)"/>
+    <!-- Right Leg Inner Dark Bevel -->
+    <polygon points="256,92 256,215 316,330 340,376" fill="url(#metalDark)"/>
+
+    <!-- Bottom Feet Bevels -->
+    <polygon points="108,376 172,376 150,392 100,388" fill="#2d3340"/>
+    <polygon points="404,376 340,376 362,392 412,388" fill="#1c212b"/>
+
+    <!-- Dynamic Metallic Curved Swoosh Across Center -->
+    <path d="M 152 350 C 210 320, 270 295, 362 238 C 342 278, 280 345, 182 356 Z" fill="url(#swooshGrad)"/>
+    <!-- Swoosh Under-Shadow -->
+    <path d="M 152 350 C 210 320, 270 295, 362 238 C 320 280, 240 335, 152 350 Z" fill="rgba(0,0,0,0.5)"/>
+
+    <!-- Apex Sharp Top Highlight -->
+    <polygon points="256,90 262,108 250,108" fill="#ffffff"/>
+  </g>
+</svg>
