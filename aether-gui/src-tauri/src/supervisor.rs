@@ -91,6 +91,26 @@ impl Supervisor {
                 ("masque", "MASQUE (HTTP/3)", "firewall"),
             ];
 
+            // Respect user's scan mode choice; if they haven't picked one, default to balanced
+            let active_scan_mode = if cfg.scan_mode.is_empty() {
+                "balanced".to_string()
+            } else {
+                cfg.scan_mode.clone()
+            };
+
+            // Calculate fair per-candidate timeout based on scan strategy:
+            // - turbo: engine budget is 30-45s, per-probe 5-6s -> give 30s
+            // - balanced: engine budget is 80-120s -> give 45s
+            // - thorough / ironclad: full range sweeps -> give 60s
+            // - stealth: slow patient cadence -> give 60s
+            let candidate_timeout_secs = match active_scan_mode.to_lowercase().as_str() {
+                "turbo" => 30,
+                "balanced" => 45,
+                "thorough" | "deep" | "ironclad" => 60,
+                "stealth" | "quiet" => 60,
+                _ => 40,
+            };
+
             for (proto, label, noize) in ladder {
                 if self.is_stopping.load(Ordering::SeqCst) {
                     return Ok(());
@@ -99,12 +119,15 @@ impl Supervisor {
                 let mut try_cfg = cfg.clone();
                 try_cfg.protocol = proto.to_string();
                 try_cfg.noize = noize.to_string();
-                try_cfg.scan_mode = "turbo".to_string();
+                try_cfg.scan_mode = active_scan_mode.clone();
 
                 let entry = LogEntry {
                     timestamp: chrono_now(),
                     level: "INFO".to_string(),
-                    message: format!("[AUTO] Probing candidate route: {} (Turbo Scan)...", label),
+                    message: format!(
+                        "[AUTO] Probing candidate route: {} (Scan: {}, timeout: {}s)...",
+                        label, active_scan_mode, candidate_timeout_secs
+                    ),
                 };
                 let _ = app.emit("aether-log", entry);
 
@@ -123,7 +146,6 @@ impl Supervisor {
                     .await
                     .is_ok()
                 {
-                    // Wait up to 5.5s for connected notification
                     let notified = self.connected_notify.notified();
                     tokio::select! {
                         _ = notified => {
@@ -135,11 +157,14 @@ impl Supervisor {
                             let _ = app.emit("aether-log", ok_entry);
                             return Ok(());
                         }
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(5500)) => {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(candidate_timeout_secs)) => {
                             let timeout_entry = LogEntry {
                                 timestamp: chrono_now(),
                                 level: "WARN".to_string(),
-                                message: format!("[AUTO] Candidate {} timed out, testing fallback route...", label),
+                                message: format!(
+                                    "[AUTO] Candidate {} timed out after {}s, testing fallback route...",
+                                    label, candidate_timeout_secs
+                                ),
                             };
                             let _ = app.emit("aether-log", timeout_entry);
                             self.kill_current_child().await;
