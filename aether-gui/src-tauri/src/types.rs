@@ -106,6 +106,15 @@ pub struct TunnelConfig {
 
     #[serde(default)]
     pub access_secret: Option<String>,
+
+    #[serde(default)]
+    pub last_success_proto: Option<String>,
+
+    #[serde(default)]
+    pub last_success_noize: Option<String>,
+
+    #[serde(default)]
+    pub last_success_ip: Option<String>,
 }
 
 fn default_protocol() -> String {
@@ -177,6 +186,9 @@ impl Default for TunnelConfig {
             access_token: None,
             access_id: None,
             access_secret: None,
+            last_success_proto: None,
+            last_success_noize: None,
+            last_success_ip: None,
         }
     }
 }
