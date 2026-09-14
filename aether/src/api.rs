@@ -435,7 +435,9 @@ impl ScanRequest {
 }
 
 pub async fn scan(identity: &Identity, request: &ScanRequest, cancel: &Cancel) -> Result<Endpoint> {
-    match request.transport {
+    // A nested tunnel scans for its carrier's edge: gool hunts WireGuard
+    // endpoints, mim hunts MASQUE ones. The inner hop is picked afterwards.
+    match request.transport.carrier() {
         Transport::Masque => {
             let probe = prober::MasqueProbe {
                 sni: consts::CONNECT_SNI.to_string(),
@@ -554,7 +556,10 @@ pub async fn verify_endpoint(
     spec: &TunnelSpec,
     cancel: &Cancel,
 ) -> Result<bool> {
-    match spec.transport {
+    // A nested tunnel verifies the edge its carrier would dial, which is the
+    // one the outer hop opens; the inner hop proves itself when the tunnel
+    // comes up.
+    match spec.transport.carrier() {
         Transport::Masque => {
             let attempt = async { Ok(crate::quick_verify_masque_peer(identity, peer).await) };
             guard(cancel, attempt).await
