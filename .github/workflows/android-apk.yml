@@ -98,6 +98,12 @@ jobs:
             sed -i '/getByName("release") {/a \        signingConfig = signingConfigs.getByName("debug")' "$GRADLE_KTS" || true
           fi
 
+      # The app ships a real system-wide VPN, so the generated project needs the
+      # Kotlin VpnService bridge, its manifest declarations and the runtime
+      # permissions. Both are kept in aether-mobile/android/ and applied here.
+      - name: Inject the Aether VPN service
+        run: python3 ../android/patch_android.py gen/android
+
       - name: Build optimized release APK (under 25MB)
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}

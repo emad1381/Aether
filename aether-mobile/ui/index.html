@@ -1,118 +1,266 @@
 <!DOCTYPE html>
-<html lang="en">
+<html class="dark" lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>Aether</title>
-<link rel="stylesheet" href="css/style.css"/>
+<link href="./css/style.css" rel="stylesheet"/>
 </head>
 <body>
-<main id="view-proxy" class="view active">
-  <header class="bar">
-    <div class="brand"><img src="assets/logo.png" alt="" class="logo"/><span class="brand-name">Aether</span></div>
-    <span class="ver" id="verBadge">v2.0.0</span>
-  </header>
-
-  <section class="hero">
-    <button id="connectBtn" class="big-btn" aria-pressed="false" type="button">
-      <span class="beacon" id="beacon"></span>
-      <span class="icon-wrap" id="iconWrap">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-      </span>
-      <span class="btn-label" id="btnLabel">Connect</span>
-    </button>
-    <div class="status-line" role="status" aria-live="polite">
-      <span class="dot" id="statusDot"></span>
-      <span class="status-text" id="statusText">Disconnected</span>
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ffd7a8"/><stop offset="0.5" stop-color="#f2711c"/><stop offset="1" stop-color="#9e4300"/>
+      </linearGradient></defs>
+      <rect x="1.5" y="1.5" width="29" height="29" rx="9" fill="#141417" stroke="#2a2a30"/>
+      <path d="M16 7.5 L23 24 H19.4 L18.1 20.6 H13.9 L12.6 24 H9 Z M14.9 17.6 H17.1 L16 14.2 Z" fill="url(#ag)"/>
+    </svg>
+    <div class="brand-text">
+      <span class="brand-name">Aether</span>
+      <span class="tag" id="version-tag">v2.0.0</span>
     </div>
-  </section>
-
-  <section class="card" id="detailsCard">
-    <button class="card-head" id="detailsToggle" aria-expanded="true" type="button">
-      <span class="card-title">Tunnel Details</span>
-      <span class="chev" id="detailsChev">▾</span>
-    </button>
-    <dl class="rows" id="detailsRows">
-      <div class="row"><dt>Protocol</dt><dd id="valProtocol">MASQUE / HTTP/3</dd></div>
-      <div class="row"><dt>Latency</dt><dd id="valLatency" class="dim">--</dd></div>
-      <div class="row"><dt>Uptime</dt><dd id="valUptime" class="dim">0s</dd></div>
-      <div class="row"><dt>Exit Location</dt><dd id="valExit" class="dim">--</dd></div>
-      <div class="row"><dt>Local proxy</dt><dd id="valSocks">127.0.0.1:1819</dd></div>
-    </dl>
-  </section>
-
-  <p class="hint">Android sends traffic through the proxy only from apps that use it. Set Wi-Fi proxy to <b id="hintSocks">127.0.0.1:1819</b> or use a client that reads SOCKS. On a rooted device <i>proxy</i> redirection works app-wide.</p>
-</main>
-
-<main id="view-console" class="view">
-  <header class="bar">
-    <div class="brand"><span class="brand-name">Activity</span></div>
-    <div class="filters" role="tablist">
-      <button class="chip active" data-filter="all" type="button">All</button>
-      <button class="chip" data-filter="events" type="button">Events</button>
-      <button class="chip" data-filter="errors" type="button">Errors</button>
-    </div>
-    <button class="icon-btn" id="clearLog" aria-label="Clear log" type="button">✕</button>
-  </header>
-  <div class="logbox" id="logbox" aria-live="polite"></div>
-</main>
-
-<main id="view-settings" class="view">
-  <header class="bar">
-    <div class="brand"><span class="brand-name">Settings</span></div>
-    <span class="ver" id="verBadge2">v2.0.0</span>
-  </header>
-
-  <section class="field">
-    <div class="field-top"><label for="protocolBtn">Protocol</label><span class="ok-tag" id="recTag">● Recommended</span></div>
-    <button class="select" id="protocolBtn" type="button"><span id="protocolLabel">MASQUE (Default, HTTP/3)</span><span class="caret">▾</span></button>
-    <div class="menu" id="protocolMenu" hidden>
-      <button class="opt" data-val="masque" data-label="MASQUE (Default, HTTP/3)" data-desc="Low-latency tunnel over HTTP/3, looks like ordinary web traffic." type="button"><span>MASQUE (Default, HTTP/3)</span><span class="tick">✓</span></button>
-      <button class="opt" data-val="masque-h2" data-label="MASQUE over TCP (HTTP/2)" data-desc="Same tunnel over TCP 443. Use when UDP is blocked or throttled." type="button"><span>MASQUE over TCP (HTTP/2)</span><span class="tick">✓</span></button>
-      <button class="opt" data-val="wg" data-label="WireGuard" data-desc="Classic UDP tunnel. Fastest where UDP passes." type="button"><span>WireGuard</span><span class="tick">✓</span></button>
-    </div>
-    <p class="desc" id="protocolDesc">Low-latency tunnel over HTTP/3, looks like ordinary web traffic.</p>
-  </section>
-
-  <section class="field">
-    <div class="field-top"><span>Scan speed</span><span class="mono-tag" id="scanHint">~default sweep</span></div>
-    <div class="seg" data-group="scan" role="radiogroup">
-      <button class="seg-btn" data-val="fast" data-hint="first answer wins" type="button">Fast</button>
-      <button class="seg-btn active" data-val="balanced" data-hint="~default sweep" type="button">Balanced</button>
-      <button class="seg-btn" data-val="deep" data-hint="whole ranges" type="button">Deep</button>
-    </div>
-    <p class="desc">Measures edge latency before it picks a gateway.</p>
-  </section>
-
-  <section class="field">
-    <div class="field-top"><span>Obfuscation</span><span class="mono-tag" id="obfHint">padding + jitter</span></div>
-    <div class="seg" data-group="obfuscation" role="radiogroup">
-      <button class="seg-btn" data-val="off" data-hint="raw packets (lowest overhead)" type="button">Off</button>
-      <button class="seg-btn active" data-val="balanced" data-hint="padding + jitter" type="button">Balanced</button>
-      <button class="seg-btn" data-val="strong" data-hint="max entropy" type="button">Strong</button>
-    </div>
-    <p class="desc">Shapes the handshake so deep packet inspection cannot match it.</p>
-  </section>
-
-  <section class="field">
-    <div class="field-top"><label for="serverInput">Server (IP:port)</label><span class="mono-tag">Optional</span></div>
-    <input id="serverInput" class="input mono" type="text" inputmode="url" placeholder="auto (leave empty)" autocomplete="off" spellcheck="false"/>
-    <p class="desc">Usually you don't need this; Aether routes to the fastest verified edge by itself.</p>
-  </section>
-
-  <button class="restore" id="restoreBtn" type="button">Restore defaults</button>
-  <span class="saved" id="savedFlash" hidden>✓ Saved</span>
-</main>
-
-<nav class="dock" aria-label="Main navigation" role="tablist">
-  <div class="dock-inner">
-    <span class="pill" id="dockPill"></span>
-    <button class="tab active" data-view="proxy" type="button"><span class="t-ic">⚡</span><span>Proxy</span></button>
-    <button class="tab" data-view="console" type="button"><span class="t-ic">▤</span><span>Console</span></button>
-    <button class="tab" data-view="settings" type="button"><span class="t-ic">⚙</span><span>Settings</span></button>
   </div>
+  <button class="icon-btn" id="header-mode-btn" title="Routing mode" type="button">
+    <span class="mode-chip" id="header-mode-chip">PROXY</span>
+  </button>
+</header>
+
+<main id="main">
+  <!-- ============================ PROXY ============================ -->
+  <section class="view active" id="view-proxy">
+    <!-- Routing mode: real switch between the SOCKS5 proxy and the system-wide VPN -->
+    <div class="seg" id="mode-group" role="group" aria-label="Routing mode">
+      <button class="seg-btn active" data-mode="proxy" type="button">
+        <span>Proxy (SOCKS5)</span>
+        <small>apps you point at 127.0.0.1:1819</small>
+      </button>
+      <button class="seg-btn" data-mode="vpn" type="button">
+        <span>VPN (system-wide)</span>
+        <small>every app, via VpnService</small>
+      </button>
+    </div>
+
+    <button class="route-card" id="route-card" type="button">
+      <span class="route-dot" id="route-dot"></span>
+      <span class="route-title" id="route-title">Smart Routing</span>
+      <span class="route-sub" id="route-sub">Auto-negotiate · fastest verified path</span>
+      <span class="route-ping" id="route-ping">-- ms</span>
+    </button>
+
+    <div class="hero">
+      <div class="aura" id="glow-aura"></div>
+      <div class="orb-wrap" id="button-container">
+        <div class="ripple" id="ripple-wave"></div>
+        <svg class="orbital" viewBox="0 0 208 208" aria-hidden="true">
+          <circle class="orbital-track" cx="104" cy="104" r="92" fill="none" stroke-width="2.5"/>
+          <circle class="orbital-arc" id="progress-arc" cx="104" cy="104" r="92" fill="none" stroke-width="2.5"
+                  stroke-dasharray="578" stroke-dashoffset="578" stroke-linecap="round"/>
+        </svg>
+        <button class="power" id="main-power-btn" aria-label="Toggle tunnel" type="button">
+          <span class="power-well" id="power-inner-well">
+            <svg id="icon-power" class="power-icon" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg>
+            <svg id="icon-sync" class="power-icon hidden spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+            <svg id="icon-stop" class="power-icon hidden" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            <svg id="icon-error" class="power-icon hidden" viewBox="0 0 24 24"><path d="M12 8v5"/><circle cx="12" cy="16.5" r="0.6"/><path d="M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          </span>
+        </button>
+      </div>
+      <div class="hero-status">
+        <div class="hero-status-head">
+          <span class="live-dot" id="live-indicator-dot"></span>
+          <h2 id="status-primary-text">Disconnected</h2>
+        </div>
+        <p class="mono dim" id="status-sub-text">Tap the dial to establish a verified tunnel</p>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-head"><span>Latency</span><span class="mono dim" id="stat-latency-hint">verified</span></div>
+        <div class="stat-value"><span id="stat-latency">--</span><small>ms</small></div>
+      </div>
+      <div class="stat">
+        <div class="stat-head"><span>Exit</span><span class="mono dim" id="stat-exit-hint">edge</span></div>
+        <div class="stat-value small"><span id="stat-exit">--</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-head"><span>Uptime</span><span class="mono dim">session</span></div>
+        <div class="stat-value small"><span id="card-uptime">00m 00s</span></div>
+      </div>
+    </div>
+
+    <div class="drawer" id="drawer">
+      <button class="drawer-head" id="details-toggle-btn" type="button" aria-expanded="false">
+        <span class="drawer-title">
+          <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
+          Engine telemetry
+        </span>
+        <span class="drawer-right">
+          <span class="pill" id="details-badge">idle</span>
+          <svg class="ic chev" id="drawer-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+        </span>
+      </button>
+      <div class="drawer-body hidden" id="details-drawer-content">
+        <div class="row">
+          <div>
+            <span class="row-label">SOCKS5 ingress</span>
+            <span class="mono" id="socks-address">127.0.0.1:1819</span>
+          </div>
+          <button class="icon-btn small" id="copy-endpoint-btn" title="Copy endpoint" type="button">
+            <svg class="ic" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+        <div class="rows">
+          <div class="row"><span class="row-label">Routing mode</span><span class="mono" id="detail-mode">Proxy</span></div>
+          <div class="row"><span class="row-label">VPN service</span><span class="mono" id="detail-vpn">not requested</span></div>
+          <div class="row"><span class="row-label">Active protocol</span><span class="mono" id="protocol-name-display">--</span></div>
+          <div class="row"><span class="row-label">Transport</span><span class="mono" id="detail-transport">--</span></div>
+          <div class="row"><span class="row-label">Tunnel MTU</span><span class="mono" id="detail-mtu">--</span></div>
+          <div class="row"><span class="row-label">Exit edge</span><span class="mono" id="detail-edge">--</span></div>
+          <div class="row"><span class="row-label">WARP</span><span class="mono" id="detail-warp">--</span></div>
+          <div class="row"><span class="row-label">Session</span><span class="mono" id="stat-uptime">00m 00s</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="summary">
+      <div class="summary-left">
+        <span class="summary-dot" id="summary-dot"></span>
+        <div>
+          <p class="summary-title" id="active-engine-title">No active engine</p>
+          <p class="mono dim" id="active-engine-sub">Protocol and obfuscation are chosen in Settings</p>
+        </div>
+      </div>
+      <button class="ghost-link" id="goto-settings" type="button">Edit</button>
+    </div>
+  </section>
+
+  <!-- ============================ CONSOLE ============================ -->
+  <section class="view" id="view-console">
+    <div class="bar">
+      <div class="chips" role="group" aria-label="Log filter">
+        <button class="chip active" data-filter="all" type="button">All</button>
+        <button class="chip" data-filter="events" type="button">Events</button>
+        <button class="chip" data-filter="errors" type="button">Errors</button>
+      </div>
+      <div class="bar-actions">
+        <button class="icon-btn" id="copy-log" title="Copy log stream" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+        <button class="icon-btn" id="clearLog" title="Clear log" type="button">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="terminal">
+      <div class="terminal-head">
+        <span class="term-dot"></span>
+        <span class="mono dim">aether core · stdout/stderr</span>
+        <span class="mono dim right" id="term-engine">idle</span>
+      </div>
+      <div class="feed" id="logbox">
+        <div class="lg-empty">Listening for core events…</div>
+      </div>
+      <div class="toast" id="copy-toast">Stream copied</div>
+    </div>
+    <footer class="foot">
+      <span class="pulse"><span class="pulse-ring"></span><span class="pulse-core"></span></span>
+      <span class="mono" id="stream-status">Listening · 0 events · 0 errors</span>
+    </footer>
+  </section>
+
+  <!-- ============================ SETTINGS ============================ -->
+  <section class="view" id="view-settings">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Routing mode</span>
+        <span class="mono dim" id="mode-hint">Proxy only · nothing else is redirected</span>
+      </div>
+      <div class="seg compact" id="mode-group-settings" role="group" aria-label="Routing mode">
+        <button class="seg-btn active" data-mode="proxy" type="button">Proxy</button>
+        <button class="seg-btn" data-mode="vpn" type="button">VPN</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Protocol</span>
+        <span class="mono dim">L4 framing</span>
+      </div>
+      <div class="menu" id="protocolMenu">
+        <button class="opt" data-val="masque" type="button"><span class="opt-label">MASQUE / HTTP/3</span><span class="opt-desc">QUIC carrier</span></button>
+        <button class="opt" data-val="masque-h2" type="button"><span class="opt-label">MASQUE / HTTP/2</span><span class="opt-desc">TCP carrier, survives UDP filtering</span></button>
+        <button class="opt" data-val="wg" type="button"><span class="opt-label">WireGuard</span><span class="opt-desc">classic, fastest</span></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Scan mode</span>
+        <span class="mono dim" id="scanHint">balanced</span>
+      </div>
+      <div class="seg compact wrap" id="scan-group">
+        <button class="seg-btn" data-group="scan" data-val="turbo" type="button">Turbo</button>
+        <button class="seg-btn active" data-group="scan" data-val="balanced" type="button">Balanced</button>
+        <button class="seg-btn" data-group="scan" data-val="thorough" type="button">Thorough</button>
+        <button class="seg-btn" data-group="scan" data-val="stealth" type="button">Stealth</button>
+        <button class="seg-btn" data-group="scan" data-val="ironclad" type="button">Ironclad</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Obfuscation</span>
+        <span class="mono dim" id="obfHint">firewall</span>
+      </div>
+      <div class="seg compact wrap">
+        <button class="seg-btn" data-group="obfuscation" data-val="off" type="button">Off</button>
+        <button class="seg-btn" data-group="obfuscation" data-val="light" type="button">Light</button>
+        <button class="seg-btn active" data-group="obfuscation" data-val="firewall" type="button">Firewall</button>
+        <button class="seg-btn" data-group="obfuscation" data-val="balanced" type="button">Balanced</button>
+        <button class="seg-btn" data-group="obfuscation" data-val="gfw" type="button">GFW</button>
+        <button class="seg-btn" data-group="obfuscation" data-val="aggressive" type="button">Aggressive</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Pinned edge</span>
+        <span class="mono dim">optional</span>
+      </div>
+      <input class="text-input" id="serverInput" placeholder="162.159.192.1:2408 — blank scans instead" spellcheck="false" type="text"/>
+      <p class="hint mono dim">Empty means the core scans and picks the fastest verified edge.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="card-title">Session</span></div>
+      <div class="row"><span class="row-label">SOCKS5 ingress</span><span class="mono">127.0.0.1:1819</span></div>
+      <div class="row"><span class="row-label">Settings file</span><span class="mono dim">settings.json (app data dir)</span></div>
+    </div>
+
+    <div class="settings-actions">
+      <button class="btn-ghost" id="restoreBtn" type="button">Restore defaults</button>
+      <span class="mono saved hidden" id="savedFlash">saved</span>
+    </div>
+  </section>
+</main>
+
+<nav class="dock" id="dock">
+  <button class="tab" data-view="proxy" type="button">
+    <svg class="ic" viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M3 3v6h6"/><circle cx="12" cy="12" r="3"/></svg>
+    <span>Proxy</span>
+  </button>
+  <button class="tab" data-view="console" type="button">
+    <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
+    <span>Console</span>
+  </button>
+  <button class="tab" data-view="settings" type="button">
+    <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 7.9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.6 15H3.5a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5 9.4a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 5.6V3.5a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 5a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a2 2 0 1 1 0 4H19.4Z"/></svg>
+    <span>Settings</span>
+  </button>
 </nav>
 
-<script src="js/app.js"></script>
+<script src="./js/app.js" type="module"></script>
 </body>
 </html>

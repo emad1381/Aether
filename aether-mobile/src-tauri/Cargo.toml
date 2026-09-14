@@ -19,6 +19,12 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "soc
 parking_lot = "0.12"
 log = "0.4"
 
+# The system-wide VPN mode is a real VpnService: the tun file descriptor is
+# handed to the in-process core's SOCKS5 listener through a userspace tun2socks.
+[target.'cfg(target_os = "android")'.dependencies]
+tun2proxy = { version = "0.8", default-features = false }
+libc = "0.2"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

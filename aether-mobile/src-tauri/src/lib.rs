@@ -1,6 +1,7 @@
 mod engine;
 mod logbridge;
 mod types;
+mod vpn;
 
 use std::sync::Arc;
 
@@ -8,6 +9,21 @@ use tauri::{Manager, State};
 
 use engine::Engine;
 use types::{Settings, Status};
+
+#[tauri::command]
+fn vpn_state() -> vpn::VpnState {
+    vpn::state()
+}
+
+#[tauri::command]
+fn vpn_start() -> Result<(), String> {
+    vpn::start()
+}
+
+#[tauri::command]
+fn vpn_stop() -> Result<(), String> {
+    vpn::stop()
+}
 
 #[tauri::command]
 fn get_status(state: State<'_, Arc<Engine>>) -> Status {
@@ -63,7 +79,10 @@ pub fn run() {
             get_settings,
             save_settings,
             connect,
-            disconnect
+            disconnect,
+            vpn_state,
+            vpn_start,
+            vpn_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aether");
