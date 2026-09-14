@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod matrix;
 mod ping;
 mod proxy;
 mod supervisor;

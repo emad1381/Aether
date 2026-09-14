@@ -1,14 +1,19 @@
 use std::path::{Path, PathBuf};
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{broadcast, mpsc, Notify, Semaphore};
+use tokio::task::JoinSet;
 
+use crate::config::save_config;
+use crate::matrix::{self, Candidate, SuccessResult};
+use crate::ping::measure_latency;
 use crate::proxy::set_windows_proxy;
 use crate::types::{LogEntry, State, TunnelConfig, TunnelStatus};
 
@@ -80,105 +85,10 @@ impl Supervisor {
             let _ = app.emit("aether-status", st.clone());
         }
 
-        // ===================================================================
-        // SMART AUTO MODE LADDER
-        // ===================================================================
-        if cfg.auto_connect {
-            let ladder = [
-                ("gool", "WARP-in-WARP (gool)", "firewall"),
-                ("masque-h2", "MASQUE over TCP (HTTP/2)", "firewall"),
-                ("wg", "WireGuard", "balanced"),
-                ("masque", "MASQUE (HTTP/3)", "firewall"),
-            ];
-
-            // Respect user's scan mode choice; if they haven't picked one, default to balanced
-            let active_scan_mode = if cfg.scan_mode.is_empty() {
-                "balanced".to_string()
-            } else {
-                cfg.scan_mode.clone()
-            };
-
-            // Calculate fair per-candidate timeout based on scan strategy:
-            // - turbo: engine budget is 30-45s, per-probe 5-6s -> give 30s
-            // - balanced: engine budget is 80-120s -> give 45s
-            // - thorough / ironclad: full range sweeps -> give 60s
-            // - stealth: slow patient cadence -> give 60s
-            let candidate_timeout_secs = match active_scan_mode.to_lowercase().as_str() {
-                "turbo" => 30,
-                "balanced" => 45,
-                "thorough" | "deep" | "ironclad" => 60,
-                "stealth" | "quiet" => 60,
-                _ => 40,
-            };
-
-            for (proto, label, noize) in ladder {
-                if self.is_stopping.load(Ordering::SeqCst) {
-                    return Ok(());
-                }
-
-                let mut try_cfg = cfg.clone();
-                try_cfg.protocol = proto.to_string();
-                try_cfg.noize = noize.to_string();
-                try_cfg.scan_mode = active_scan_mode.clone();
-
-                let entry = LogEntry {
-                    timestamp: chrono_now(),
-                    level: "INFO".to_string(),
-                    message: format!(
-                        "[AUTO] Probing candidate route: {} (Scan: {}, timeout: {}s)...",
-                        label, active_scan_mode, candidate_timeout_secs
-                    ),
-                };
-                let _ = app.emit("aether-log", entry);
-
-                {
-                    let mut st = self.status.lock();
-                    st.state = State::Connecting;
-                    st.protocol = Some(format!("AUTO: Testing {}...", label));
-                    let _ = app.emit("aether-status", st.clone());
-                }
-
-                let args = build_cli_args(&try_cfg);
-                let custom_proto = format!("AUTO: {}", label);
-
-                if self
-                    .spawn_process(&bin_path, &args, &app, &try_cfg, Some(&custom_proto))
-                    .await
-                    .is_ok()
-                {
-                    let notified = self.connected_notify.notified();
-                    tokio::select! {
-                        _ = notified => {
-                            let ok_entry = LogEntry {
-                                timestamp: chrono_now(),
-                                level: "INFO".to_string(),
-                                message: format!("[AUTO] Route confirmed! Connected via {}", label),
-                            };
-                            let _ = app.emit("aether-log", ok_entry);
-                            return Ok(());
-                        }
-                        _ = tokio::time::sleep(std::time::Duration::from_secs(candidate_timeout_secs)) => {
-                            let timeout_entry = LogEntry {
-                                timestamp: chrono_now(),
-                                level: "WARN".to_string(),
-                                message: format!(
-                                    "[AUTO] Candidate {} timed out after {}s, testing fallback route...",
-                                    label, candidate_timeout_secs
-                                ),
-                            };
-                            let _ = app.emit("aether-log", timeout_entry);
-                            self.kill_current_child().await;
-                        }
-                    }
-                }
-            }
-
-            // All candidates in auto ladder failed
-            let mut st = self.status.lock();
-            st.state = State::Error;
-            st.error_message = Some("Auto connection exhausted all routes. Check network connectivity.".to_string());
-            let _ = app.emit("aether-status", st.clone());
-            return Err("Auto connection exhausted all routes.".to_string());
+        // Auto Mode is deliberately disabled for an explicit Tor configuration.
+        // Tor is an opt-in transport, not a background matrix dimension.
+        if cfg.auto_connect && !cfg.tor_enabled {
+            return self.run_auto_matrix(&bin_path, &app, cfg).await;
         }
 
         // ===================================================================
@@ -186,6 +96,224 @@ impl Supervisor {
         // ===================================================================
         let args = build_cli_args(&cfg);
         self.spawn_process(&bin_path, &args, &app, &cfg, None).await
+    }
+
+    /// Race the remembered route and strong fallbacks first. Only if that tier
+    /// is exhausted do we release the full 48-combination matrix, three engine
+    /// processes at a time. Probe instances are bound to isolated local ports;
+    /// the selected configuration is restarted on the user's real proxy port.
+    async fn run_auto_matrix(
+        &self,
+        bin_path: &Path,
+        app: &AppHandle,
+        cfg: TunnelConfig,
+    ) -> Result<(), String> {
+        const MAX_CONCURRENT: usize = 3;
+        const SOCKS_PORT_BASE: u16 = 18_200;
+        const HTTP_PORT_BASE: u16 = 19_200;
+        const GRACE_WINDOW: Duration = Duration::from_secs(4);
+
+        let scan_mode = if cfg.scan_mode.trim().is_empty() {
+            "balanced".to_string()
+        } else {
+            cfg.scan_mode.clone()
+        };
+        let candidate_timeout = Duration::from_secs(matrix::timeout_for_scan_mode(&scan_mode));
+        let priority = matrix::prioritized_candidates(&cfg);
+        let priority_keys: HashSet<Candidate> = priority.iter().cloned().collect();
+        let fallback = matrix::full_matrix()
+            .into_iter()
+            .filter(|candidate| !priority_keys.contains(candidate))
+            .collect::<Vec<_>>();
+
+        emit_auto_log(
+            app,
+            "INFO",
+            format!(
+                "[AUTO] Starting priority race ({} route(s), {}, {}s per candidate, max {} parallel).",
+                priority.len(), scan_mode, candidate_timeout.as_secs(), MAX_CONCURRENT
+            ),
+        );
+
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
+        let (event_tx, mut event_rx) = mpsc::channel::<CandidateEvent>(32);
+        let (cancel_tx, _) = broadcast::channel::<()>(MAX_CONCURRENT + 1);
+        let mut external_stop_rx = self.kill_tx.subscribe();
+        let mut workers = JoinSet::new();
+        let mut running = HashSet::<u64>::new();
+        let mut next_id = 0_u64;
+        let mut queue = VecDeque::from(priority);
+        let mut fallback_pending = Some(fallback);
+        let mut successes = Vec::<SuccessResult>::new();
+        let mut grace_deadline: Option<tokio::time::Instant> = None;
+
+        loop {
+            if self.is_stopping.load(Ordering::SeqCst) {
+                let _ = cancel_tx.send(());
+                while workers.join_next().await.is_some() {}
+                return Ok(());
+            }
+
+            // A successful candidate freezes the queue. We only allow the
+            // already-running candidates to finish during the exact 4s grace.
+            while grace_deadline.is_none() && running.len() < MAX_CONCURRENT {
+                let Some(candidate) = queue.pop_front() else { break };
+                let id = next_id;
+                next_id += 1;
+                let socks_port = SOCKS_PORT_BASE + id as u16;
+                let http_port = HTTP_PORT_BASE + id as u16;
+                running.insert(id);
+
+                emit_auto_log(
+                    app,
+                    "INFO",
+                    format!("[AUTO] Testing {}...", candidate.display_name()),
+                );
+                {
+                    let mut st = self.status.lock();
+                    st.protocol = Some(format!("AUTO: Testing {}", candidate.display_name()));
+                    let _ = app.emit("aether-status", st.clone());
+                }
+
+                let permit = semaphore.clone();
+                let event_tx = event_tx.clone();
+                let app = app.clone();
+                let bin_path = bin_path.to_path_buf();
+                let base_cfg = cfg.clone();
+                let cancel_rx = cancel_tx.subscribe();
+                let stop_rx = self.kill_tx.subscribe();
+                workers.spawn(async move {
+                    let _permit = permit.acquire_owned().await.expect("matrix semaphore closed");
+                    run_candidate(
+                        id,
+                        candidate,
+                        base_cfg,
+                        bin_path,
+                        socks_port,
+                        http_port,
+                        candidate_timeout,
+                        app,
+                        event_tx,
+                        cancel_rx,
+                        stop_rx,
+                    )
+                    .await;
+                });
+            }
+
+            // The priority tier failed: only now is the larger 48-item
+            // matrix released. It continues to use the same three-slot cap.
+            if running.is_empty() && queue.is_empty() && grace_deadline.is_none() {
+                if let Some(fallback) = fallback_pending.take() {
+                    emit_auto_log(
+                        app,
+                        "WARN",
+                        format!(
+                            "[AUTO] Priority routes failed; expanding to the full {}-candidate matrix.",
+                            fallback.len()
+                        ),
+                    );
+                    queue = VecDeque::from(fallback);
+                    continue;
+                }
+
+                let mut st = self.status.lock();
+                st.state = State::Error;
+                st.error_message = Some(
+                    "Auto mode exhausted every protocol, obfuscation, and IP-version combination. Check basic network connectivity or enable Tor Integration."
+                        .to_string(),
+                );
+                let _ = app.emit("aether-status", st.clone());
+                emit_auto_log(
+                    app,
+                    "ERROR",
+                    "[AUTO] All protocol / noize / IP-version combinations were exhausted. Check connectivity or try Tor Integration.".to_string(),
+                );
+                let _ = cancel_tx.send(());
+                while workers.join_next().await.is_some() {}
+                return Err("Auto connection exhausted all candidates.".to_string());
+            }
+
+            if let Some(deadline) = grace_deadline {
+                tokio::select! {
+                    _ = external_stop_rx.recv() => {
+                        self.is_stopping.store(true, Ordering::SeqCst);
+                        let _ = cancel_tx.send(());
+                        while workers.join_next().await.is_some() {}
+                        return Ok(());
+                    }
+                    _ = tokio::time::sleep_until(deadline) => {
+                        let winner = successes.iter().min_by_key(|success| success.latency_ms)
+                            .cloned().expect("grace window only starts after a success");
+                        let beat = successes.len().saturating_sub(1);
+                        let _ = cancel_tx.send(());
+                        while workers.join_next().await.is_some() {}
+
+                        emit_auto_log(
+                            app,
+                            "INFO",
+                            format!(
+                                "[AUTO] Connected via {} — {}ms, beat {} other candidate(s). Restarting on your configured local proxy port...",
+                                winner.candidate.display_name(), winner.latency_ms, beat
+                            ),
+                        );
+
+                        let mut selected_cfg = cfg.clone();
+                        selected_cfg.protocol = winner.candidate.protocol.clone();
+                        selected_cfg.noize = winner.candidate.noize.clone();
+                        selected_cfg.ip_family = winner.candidate.ip_family.clone();
+                        selected_cfg.scan_mode = scan_mode.clone();
+                        selected_cfg.last_success_proto = Some(selected_cfg.protocol.clone());
+                        selected_cfg.last_success_noize = Some(selected_cfg.noize.clone());
+                        selected_cfg.last_success_ip = Some(selected_cfg.ip_family.clone());
+                        *self.current_config.lock() = Some(selected_cfg.clone());
+                        let _ = save_config(&selected_cfg);
+
+                        let custom_proto = format!("AUTO: {}", winner.candidate.display_name());
+                        let args = build_cli_args(&selected_cfg);
+                        return self.spawn_process(bin_path, &args, app, &selected_cfg, Some(&custom_proto)).await;
+                    }
+                    Some(event) = event_rx.recv() => {
+                        match event {
+                            CandidateEvent::Success { id, result } => {
+                                if running.contains(&id) {
+                                    emit_auto_log(app, "INFO", format!("[AUTO] {} ready in {}ms; comparing active routes...", result.candidate.display_name(), result.latency_ms));
+                                    successes.push(result);
+                                }
+                            }
+                            CandidateEvent::Finished { id, message } => {
+                                running.remove(&id);
+                                emit_auto_log(app, "WARN", format!("[AUTO] Candidate {id} finished during grace: {message}"));
+                            }
+                        }
+                    }
+                }
+            } else {
+                tokio::select! {
+                    _ = external_stop_rx.recv() => {
+                        self.is_stopping.store(true, Ordering::SeqCst);
+                        let _ = cancel_tx.send(());
+                        while workers.join_next().await.is_some() {}
+                        return Ok(());
+                    }
+                    Some(event) = event_rx.recv() => match event {
+                        CandidateEvent::Success { id, result } => {
+                            if running.contains(&id) {
+                                emit_auto_log(app, "INFO", format!("[AUTO] {} ready in {}ms; collecting results for 4 seconds...", result.candidate.display_name(), result.latency_ms));
+                                successes.push(result);
+                                grace_deadline = Some(tokio::time::Instant::now() + GRACE_WINDOW);
+                            }
+                        }
+                        CandidateEvent::Finished { id, message } => {
+                            if running.remove(&id) {
+                                emit_auto_log(app, "WARN", format!("[AUTO] Candidate {id} failed: {message}"));
+                            }
+                        }
+                    }
+                    else => return Err("Auto candidate event channel closed unexpectedly.".to_string()),
+                }
+            }
+        }
     }
 
     async fn spawn_process(
@@ -380,6 +508,187 @@ impl Supervisor {
         st.latency_ms = Some(ms);
         let _ = app.emit("aether-status", st.clone());
     }
+}
+
+enum CandidateEvent {
+    Success { id: u64, result: SuccessResult },
+    Finished { id: u64, message: String },
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_candidate(
+    id: u64,
+    candidate: Candidate,
+    mut cfg: TunnelConfig,
+    bin_path: PathBuf,
+    socks_port: u16,
+    http_port: u16,
+    timeout: Duration,
+    app: AppHandle,
+    event_tx: mpsc::Sender<CandidateEvent>,
+    mut cancel_rx: broadcast::Receiver<()>,
+    mut stop_rx: broadcast::Receiver<()>,
+) {
+    cfg.protocol = candidate.protocol.clone();
+    cfg.noize = candidate.noize.clone();
+    cfg.ip_family = candidate.ip_family.clone();
+    cfg.socks_port = socks_port;
+    cfg.http_port = Some(http_port);
+
+    let args = build_cli_args(&cfg);
+    let mut command = tokio::process::Command::new(bin_path);
+    command.args(args);
+    command.stdin(std::process::Stdio::null());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = event_tx.send(CandidateEvent::Finished {
+                id,
+                message: format!("could not start engine: {error}"),
+            }).await;
+            return;
+        }
+    };
+
+    let mut stdout = child.stdout.take().map(|pipe| BufReader::new(pipe).lines());
+    let mut stderr = child.stderr.take().map(|pipe| BufReader::new(pipe).lines());
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut reported_success = false;
+
+    loop {
+        tokio::select! {
+            _ = cancel_rx.recv() => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return;
+            }
+            _ = stop_rx.recv() => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return;
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                if !reported_success {
+                    let _ = event_tx.send(CandidateEvent::Finished {
+                        id,
+                        message: format!("timed out after {}s", timeout.as_secs()),
+                    }).await;
+                }
+                return;
+            }
+            result = child.wait() => {
+                let message = match result {
+                    Ok(status) => format!("engine exited ({status})"),
+                    Err(error) => format!("engine wait failed: {error}"),
+                };
+                if !reported_success {
+                    let _ = event_tx.send(CandidateEvent::Finished { id, message }).await;
+                }
+                return;
+            }
+            line = async {
+                match stderr.as_mut() {
+                    Some(lines) => lines.next_line().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match line {
+                    Ok(Some(line)) => {
+                        emit_auto_log(&app, log_level(&line), format!("[AUTO #{id}] {line}"));
+                        if !reported_success && line.contains("socks5 server listening") {
+                            let latency_ms = probe_candidate_latency(socks_port).await;
+                            reported_success = true;
+                            let _ = event_tx.send(CandidateEvent::Success {
+                                id,
+                                result: SuccessResult { candidate: candidate.clone(), latency_ms },
+                            }).await;
+                        }
+                    }
+                    Ok(None) => stderr = None,
+                    Err(error) => {
+                        emit_auto_log(&app, "WARN", format!("[AUTO #{id}] stderr read error: {error}"));
+                        stderr = None;
+                    }
+                }
+            }
+            line = async {
+                match stdout.as_mut() {
+                    Some(lines) => lines.next_line().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match line {
+                    Ok(Some(line)) => {
+                        emit_auto_log(&app, log_level(&line), format!("[AUTO #{id}] {line}"));
+                        if !reported_success && line.contains("socks5 server listening") {
+                            let latency_ms = probe_candidate_latency(socks_port).await;
+                            reported_success = true;
+                            let _ = event_tx.send(CandidateEvent::Success {
+                                id,
+                                result: SuccessResult { candidate: candidate.clone(), latency_ms },
+                            }).await;
+                        }
+                    }
+                    Ok(None) => stdout = None,
+                    Err(error) => {
+                        emit_auto_log(&app, "WARN", format!("[AUTO #{id}] stdout read error: {error}"));
+                        stdout = None;
+                    }
+                }
+            }
+        }
+
+        if stdout.is_none() && stderr.is_none() {
+            // The process may still be alive briefly after closing pipes; wait
+            // for it instead of leaving a process behind.
+            let result = child.wait().await;
+            if !reported_success {
+                let message = match result {
+                    Ok(status) => format!("engine closed output ({status})"),
+                    Err(error) => format!("engine wait failed: {error}"),
+                };
+                let _ = event_tx.send(CandidateEvent::Finished { id, message }).await;
+            }
+            return;
+        }
+    }
+}
+
+async fn probe_candidate_latency(socks_port: u16) -> u64 {
+    // A ready SOCKS listener is the success condition. RTT improves ranking;
+    // a blocked trace endpoint must not discard an otherwise usable tunnel.
+    match tokio::time::timeout(Duration::from_secs(4), measure_latency(socks_port)).await {
+        Ok(Ok(latency)) => latency,
+        _ => u64::MAX / 4,
+    }
+}
+
+fn log_level(line: &str) -> &'static str {
+    if line.contains("ERROR") || line.contains("[-] ") || line.starts_with("error:") {
+        "ERROR"
+    } else if line.contains("WARN") || line.contains("[!] ") {
+        "WARN"
+    } else {
+        "INFO"
+    }
+}
+
+fn emit_auto_log(app: &AppHandle, level: &str, message: String) {
+    let _ = app.emit("aether-log", LogEntry {
+        timestamp: chrono_now(),
+        level: level.to_string(),
+        message,
+    });
 }
 
 fn chrono_now() -> String {
