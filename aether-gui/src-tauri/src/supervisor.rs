@@ -160,8 +160,11 @@ impl Supervisor {
                 let Some(candidate) = queue.pop_front() else { break };
                 let id = next_id;
                 next_id += 1;
-                let socks_port = SOCKS_PORT_BASE + id as u16;
-                let http_port = HTTP_PORT_BASE + id as u16;
+                // Each worker owns a 100-port lane. It chooses a free pair
+                // inside that lane before spawning and can retry on bind
+                // failure without colliding with another active worker.
+                let socks_port = SOCKS_PORT_BASE + (id as u16 * 100);
+                let http_port = HTTP_PORT_BASE + (id as u16 * 100);
                 running.insert(id);
 
                 emit_auto_log(
@@ -269,6 +272,18 @@ impl Supervisor {
                         *self.current_config.lock() = Some(selected_cfg.clone());
                         let _ = save_config(&selected_cfg);
 
+                        {
+                            let mut st = self.status.lock();
+                            st.state = State::Connecting;
+                            st.protocol = Some("AUTO: Switching to final port…".to_string());
+                            let _ = app.emit("aether-status", st.clone());
+                        }
+                        emit_auto_log(
+                            app,
+                            "INFO",
+                            format!("[AUTO] Switching to final port 127.0.0.1:{}…", selected_cfg.socks_port),
+                        );
+
                         let custom_proto = format!("AUTO: {}", winner.candidate.display_name());
                         let args = build_cli_args(&selected_cfg);
                         return self.spawn_process(bin_path, &args, app, &selected_cfg, Some(&custom_proto)).await;
@@ -309,7 +324,7 @@ impl Supervisor {
                                 emit_auto_log(app, "WARN", format!("[AUTO] Candidate {id} failed: {message}"));
                             }
                         }
-                    }
+                    },
                     else => return Err("Auto candidate event channel closed unexpectedly.".to_string()),
                 }
             }
@@ -521,8 +536,8 @@ async fn run_candidate(
     candidate: Candidate,
     mut cfg: TunnelConfig,
     bin_path: PathBuf,
-    socks_port: u16,
-    http_port: u16,
+    socks_port_start: u16,
+    http_port_start: u16,
     timeout: Duration,
     app: AppHandle,
     event_tx: mpsc::Sender<CandidateEvent>,
@@ -532,144 +547,217 @@ async fn run_candidate(
     cfg.protocol = candidate.protocol.clone();
     cfg.noize = candidate.noize.clone();
     cfg.ip_family = candidate.ip_family.clone();
-    cfg.socks_port = socks_port;
-    cfg.http_port = Some(http_port);
+    for retry in 0..3_u16 {
+        let Some((socks_port, http_port)) = find_free_port_pair(
+            socks_port_start + retry,
+            http_port_start + retry,
+        ) else {
+            continue;
+        };
+        cfg.socks_port = socks_port;
+        cfg.http_port = Some(http_port);
 
-    let args = build_cli_args(&cfg);
+        match run_candidate_once(
+            id,
+            candidate.clone(),
+            cfg.clone(),
+            &bin_path,
+            socks_port,
+            timeout,
+            &app,
+            &event_tx,
+            &mut cancel_rx,
+            &mut stop_rx,
+        ).await {
+            CandidateRunResult::PortConflict => {
+                emit_auto_log(&app, "WARN", format!("[AUTO #{id}] port conflict; retrying with the next free local port."));
+            }
+            CandidateRunResult::Complete => return,
+        }
+    }
+
+    let _ = event_tx.send(CandidateEvent::Finished {
+        id,
+        message: "could not reserve an isolated SOCKS/HTTP port pair".to_string(),
+    }).await;
+}
+
+enum CandidateRunResult { PortConflict, Complete }
+
+fn is_data_plane_confirmation(line: &str) -> bool {
+    // QUIC MASQUE, H2 MASQUE, direct WG, WARP-in-WARP and MASQUE-in-MASQUE
+    // all emit this stable success suffix only after their end-to-end probe.
+    line.contains("tunnel validated (end-to-end data confirmed)")
+}
+
+fn is_bind_conflict(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("address already in use")
+        || lower.contains("only one usage of each socket address")
+        || (lower.contains("bind") && lower.contains("address"))
+}
+
+fn find_free_port_pair(socks_start: u16, http_start: u16) -> Option<(u16, u16)> {
+    for offset in 0..99_u16 {
+        let socks = socks_start.checked_add(offset)?;
+        let http = http_start.checked_add(offset)?;
+        let socks_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, socks));
+        let http_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, http));
+        if let (Ok(socks_listener), Ok(http_listener)) = (socks_listener, http_listener) {
+            drop(socks_listener);
+            drop(http_listener);
+            return Some((socks, http));
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+struct KillOnCloseJob(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for KillOnCloseJob {}
+
+#[cfg(windows)]
+impl Drop for KillOnCloseJob {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0); }
+    }
+}
+
+#[cfg(windows)]
+fn attach_kill_on_close_job(child: &Child) -> Option<KillOnCloseJob> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+
+    let pid = child.id()?;
+    unsafe {
+        let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+        if process.is_null() { return None; }
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() { CloseHandle(process); return None; }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) != 0;
+        let assigned = configured && AssignProcessToJobObject(job, process) != 0;
+        CloseHandle(process);
+        if assigned { Some(KillOnCloseJob(job)) } else { CloseHandle(job); None }
+    }
+}
+
+#[cfg(not(windows))]
+struct KillOnCloseJob;
+
+#[cfg(not(windows))]
+fn attach_kill_on_close_job(_child: &Child) -> Option<KillOnCloseJob> { Some(KillOnCloseJob) }
+
+#[allow(clippy::too_many_arguments)]
+async fn run_candidate_once(
+    id: u64,
+    candidate: Candidate,
+    cfg: TunnelConfig,
+    bin_path: &Path,
+    socks_port: u16,
+    timeout: Duration,
+    app: &AppHandle,
+    event_tx: &mpsc::Sender<CandidateEvent>,
+    cancel_rx: &mut broadcast::Receiver<()>,
+    stop_rx: &mut broadcast::Receiver<()>,
+) -> CandidateRunResult {
     let mut command = tokio::process::Command::new(bin_path);
-    command.args(args);
+    command.args(build_cli_args(&cfg));
     command.stdin(std::process::Stdio::null());
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
     #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    { command.creation_flags(0x08000000); }
 
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            let _ = event_tx.send(CandidateEvent::Finished {
-                id,
-                message: format!("could not start engine: {error}"),
-            }).await;
-            return;
+            let _ = event_tx.send(CandidateEvent::Finished { id, message: format!("could not start engine: {error}") }).await;
+            return CandidateRunResult::Complete;
         }
     };
-
+    // Keep this guard alive for the entire temporary candidate lifetime. If
+    // the GUI or task dies, closing the job handle terminates the child too.
+    let _job = attach_kill_on_close_job(&child);
     let mut stdout = child.stdout.take().map(|pipe| BufReader::new(pipe).lines());
     let mut stderr = child.stderr.take().map(|pipe| BufReader::new(pipe).lines());
     let deadline = tokio::time::Instant::now() + timeout;
+    let mut saw_data_plane = false;
+    let mut socks_bound = false;
     let mut reported_success = false;
+    let mut port_conflict = false;
 
     loop {
         tokio::select! {
-            _ = cancel_rx.recv() => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                return;
-            }
-            _ = stop_rx.recv() => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                return;
-            }
+            _ = cancel_rx.recv() => { let _ = child.kill().await; let _ = child.wait().await; return CandidateRunResult::Complete; }
+            _ = stop_rx.recv() => { let _ = child.kill().await; let _ = child.wait().await; return CandidateRunResult::Complete; }
             _ = tokio::time::sleep_until(deadline) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                if !reported_success {
-                    let _ = event_tx.send(CandidateEvent::Finished {
-                        id,
-                        message: format!("timed out after {}s", timeout.as_secs()),
-                    }).await;
-                }
-                return;
+                let _ = child.kill().await; let _ = child.wait().await;
+                if !reported_success { let _ = event_tx.send(CandidateEvent::Finished { id, message: format!("timed out after {}s", timeout.as_secs()) }).await; }
+                return CandidateRunResult::Complete;
             }
             result = child.wait() => {
-                let message = match result {
-                    Ok(status) => format!("engine exited ({status})"),
-                    Err(error) => format!("engine wait failed: {error}"),
-                };
+                if port_conflict { return CandidateRunResult::PortConflict; }
                 if !reported_success {
+                    let message = match result { Ok(status) => format!("engine exited ({status})"), Err(error) => format!("engine wait failed: {error}") };
                     let _ = event_tx.send(CandidateEvent::Finished { id, message }).await;
                 }
-                return;
+                return CandidateRunResult::Complete;
             }
-            line = async {
-                match stderr.as_mut() {
-                    Some(lines) => lines.next_line().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                match line {
-                    Ok(Some(line)) => {
-                        emit_auto_log(&app, log_level(&line), format!("[AUTO #{id}] {line}"));
-                        if !reported_success && line.contains("socks5 server listening") {
-                            let latency_ms = probe_candidate_latency(socks_port).await;
-                            reported_success = true;
-                            let _ = event_tx.send(CandidateEvent::Success {
-                                id,
-                                result: SuccessResult { candidate: candidate.clone(), latency_ms },
-                            }).await;
-                        }
-                    }
-                    Ok(None) => stderr = None,
-                    Err(error) => {
-                        emit_auto_log(&app, "WARN", format!("[AUTO #{id}] stderr read error: {error}"));
-                        stderr = None;
-                    }
-                }
+            line = async { match stderr.as_mut() { Some(lines) => lines.next_line().await, None => std::future::pending().await } } => {
+                match line { Ok(Some(line)) => {
+                    port_conflict |= is_bind_conflict(&line);
+                    saw_data_plane |= is_data_plane_confirmation(&line);
+                    socks_bound |= line.contains("socks5 server listening");
+                    emit_auto_log(app, log_level(&line), format!("[AUTO #{id}] {line}"));
+                }, Ok(None) => stderr = None, Err(error) => { emit_auto_log(app, "WARN", format!("[AUTO #{id}] stderr read error: {error}")); stderr = None; } }
             }
-            line = async {
-                match stdout.as_mut() {
-                    Some(lines) => lines.next_line().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                match line {
-                    Ok(Some(line)) => {
-                        emit_auto_log(&app, log_level(&line), format!("[AUTO #{id}] {line}"));
-                        if !reported_success && line.contains("socks5 server listening") {
-                            let latency_ms = probe_candidate_latency(socks_port).await;
-                            reported_success = true;
-                            let _ = event_tx.send(CandidateEvent::Success {
-                                id,
-                                result: SuccessResult { candidate: candidate.clone(), latency_ms },
-                            }).await;
-                        }
-                    }
-                    Ok(None) => stdout = None,
-                    Err(error) => {
-                        emit_auto_log(&app, "WARN", format!("[AUTO #{id}] stdout read error: {error}"));
-                        stdout = None;
-                    }
-                }
+            line = async { match stdout.as_mut() { Some(lines) => lines.next_line().await, None => std::future::pending().await } } => {
+                match line { Ok(Some(line)) => {
+                    port_conflict |= is_bind_conflict(&line);
+                    saw_data_plane |= is_data_plane_confirmation(&line);
+                    socks_bound |= line.contains("socks5 server listening");
+                    emit_auto_log(app, log_level(&line), format!("[AUTO #{id}] {line}"));
+                }, Ok(None) => stdout = None, Err(error) => { emit_auto_log(app, "WARN", format!("[AUTO #{id}] stdout read error: {error}")); stdout = None; } }
             }
         }
 
-        if stdout.is_none() && stderr.is_none() {
-            // The process may still be alive briefly after closing pipes; wait
-            // for it instead of leaving a process behind.
-            let result = child.wait().await;
-            if !reported_success {
-                let message = match result {
-                    Ok(status) => format!("engine closed output ({status})"),
-                    Err(error) => format!("engine wait failed: {error}"),
-                };
-                let _ = event_tx.send(CandidateEvent::Finished { id, message }).await;
-            }
-            return;
+        if port_conflict {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return CandidateRunResult::PortConflict;
         }
-    }
-}
-
-async fn probe_candidate_latency(socks_port: u16) -> u64 {
-    // A ready SOCKS listener is the success condition. RTT improves ranking;
-    // a blocked trace endpoint must not discard an otherwise usable tunnel.
-    match tokio::time::timeout(Duration::from_secs(4), measure_latency(socks_port)).await {
-        Ok(Ok(latency)) => latency,
-        _ => u64::MAX / 4,
+        if saw_data_plane && socks_bound && !reported_success {
+            match tokio::time::timeout(Duration::from_secs(4), measure_latency(socks_port)).await {
+                Ok(Ok(latency_ms)) => {
+                    reported_success = true;
+                    let _ = event_tx.send(CandidateEvent::Success { id, result: SuccessResult { candidate: candidate.clone(), latency_ms } }).await;
+                }
+                Ok(Err(error)) => {
+                    let _ = child.kill().await; let _ = child.wait().await;
+                    let _ = event_tx.send(CandidateEvent::Finished { id, message: format!("SOCKS traffic probe failed: {error}") }).await;
+                    return CandidateRunResult::Complete;
+                }
+                Err(_) => {
+                    let _ = child.kill().await; let _ = child.wait().await;
+                    let _ = event_tx.send(CandidateEvent::Finished { id, message: "SOCKS traffic probe timed out".to_string() }).await;
+                    return CandidateRunResult::Complete;
+                }
+            }
+        }
     }
 }
 
