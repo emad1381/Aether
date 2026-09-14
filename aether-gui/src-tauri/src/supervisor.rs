@@ -220,13 +220,15 @@ impl Supervisor {
                     continue;
                 }
 
-                let mut st = self.status.lock();
-                st.state = State::Error;
-                st.error_message = Some(
-                    "Auto mode exhausted every protocol, obfuscation, and IP-version combination. Check basic network connectivity or enable Tor Integration."
-                        .to_string(),
-                );
-                let _ = app.emit("aether-status", st.clone());
+                {
+                    let mut st = self.status.lock();
+                    st.state = State::Error;
+                    st.error_message = Some(
+                        "Auto mode exhausted every protocol, obfuscation, and IP-version combination. Check basic network connectivity or enable Tor Integration."
+                            .to_string(),
+                    );
+                    let _ = app.emit("aether-status", st.clone());
+                }
                 emit_auto_log(
                     app,
                     "ERROR",
