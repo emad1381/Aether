@@ -428,7 +428,10 @@ fn wiw_endpoints_with_fallback(lookup: &dyn Fn(&str) -> Option<String>) -> Resul
     chosen.checked()
 }
 
-async fn run_gool(
+/// The warp-in-warp reconnect loop: scan for two edges if they were not handed
+/// over, run the tunnel, and start again when it drops. Blocks for the life of
+/// the connection, so an embedder runs it on a task of its own.
+pub async fn run_gool(
     primary: account::Identity,
     secondary: account::Identity,
     listen: SocketAddr,
@@ -1270,15 +1273,15 @@ async fn run_masque(
     }
 }
 
-struct MasqueHop {
-    stack: netstack::StackHandle,
-    exit: TunnelExit,
-    _ctrl: tokio::sync::mpsc::Sender<quic::Control>,
-    _guard: TaskGuard,
+pub(crate) struct MasqueHop {
+    pub(crate) stack: netstack::StackHandle,
+    pub(crate) exit: TunnelExit,
+    pub(crate) _ctrl: tokio::sync::mpsc::Sender<quic::Control>,
+    pub(crate) _guard: TaskGuard,
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn establish_masque(
+pub(crate) async fn establish_masque(
     identity: &account::Identity,
     peer: SocketAddr,
     ech: Option<Vec<u8>>,
@@ -1504,7 +1507,7 @@ fn inner_masque_candidates(outer: SocketAddr, count: usize) -> Vec<SocketAddr> {
     out
 }
 
-async fn spawn_tcp_forwarder(
+pub(crate) async fn spawn_tcp_forwarder(
     outer: &netstack::StackHandle,
     remote: SocketAddr,
 ) -> Result<(SocketAddr, TaskGuard)> {
@@ -1545,7 +1548,10 @@ async fn spawn_tcp_forwarder(
     Ok((local, TaskGuard(vec![task.abort_handle()])))
 }
 
-async fn run_masque_in_masque(
+/// One round of the masque-in-masque tunnel: an outer MASQUE tunnel, then an
+/// inner one dialled through it from a different exit edge. `inner_peers` are
+/// tried in order; the first one that answers inside the outer tunnel wins.
+pub async fn run_masque_in_masque(
     primary: &account::Identity,
     secondary: &account::Identity,
     peer: SocketAddr,
@@ -1670,7 +1676,10 @@ async fn run_masque_in_masque(
     outcome
 }
 
-async fn run_mim(
+/// The masque-in-masque reconnect loop: scan for an outer edge, pick an inner
+/// one, and start over when the tunnel drops. Blocks for the life of the
+/// connection.
+pub async fn run_mim(
     primary: account::Identity,
     secondary: account::Identity,
     ech: Option<Vec<u8>>,
@@ -2251,7 +2260,7 @@ fn spawn_http_proxy(
     }))
 }
 
-async fn establish_wg(
+pub(crate) async fn establish_wg(
     identity: &account::Identity,
     peer: SocketAddr,
     mtu: usize,
@@ -2315,7 +2324,7 @@ async fn establish_wg(
     Ok((stack, exit))
 }
 
-struct TaskGuard(Vec<tokio::task::AbortHandle>);
+pub(crate) struct TaskGuard(Vec<tokio::task::AbortHandle>);
 
 impl TaskGuard {
     fn new() -> Self {
@@ -2335,7 +2344,7 @@ impl Drop for TaskGuard {
     }
 }
 
-async fn spawn_udp_forwarder(
+pub(crate) async fn spawn_udp_forwarder(
     outer: &netstack::StackHandle,
     remote: SocketAddr,
 ) -> Result<(SocketAddr, TaskGuard)> {
@@ -2388,7 +2397,11 @@ async fn spawn_udp_forwarder(
     Ok((local, guard))
 }
 
-async fn run_warp_in_warp(
+/// One round of the warp-in-warp tunnel: an outer WireGuard tunnel carrying
+/// an inner one to a different exit edge, with the SOCKS5 server on top. This
+/// is the single-connection part; the reconnect loop that calls it is
+/// `run_gool`.
+pub async fn run_warp_in_warp(
     primary: account::Identity,
     secondary: account::Identity,
     peer: SocketAddr,
@@ -2466,7 +2479,7 @@ async fn run_warp_in_warp(
     outcome
 }
 
-fn join_outcome(
+pub(crate) fn join_outcome(
     what: &str,
     result: std::result::Result<Result<()>, tokio::task::JoinError>,
 ) -> Result<()> {

@@ -13,34 +13,60 @@ use crate::{
 pub enum Transport {
     Masque,
     WireGuard,
+    /// WireGuard carried inside another WireGuard tunnel (`gool`).
+    Gool,
+    /// MASQUE carried inside another MASQUE tunnel (`mim`).
+    Mim,
 }
 
 impl Transport {
     pub fn parse(raw: &str) -> Transport {
         match raw.trim().to_lowercase().as_str() {
             "wg" | "wireguard" | "warp" => Transport::WireGuard,
+            "gool" | "wiw" | "warp-in-warp" | "warpinwarp" => Transport::Gool,
+            "mim" | "m2" | "masque-in-masque" | "masqueinmasque" => Transport::Mim,
             _ => Transport::Masque,
         }
     }
 
+    /// The carrier the tunnel rides on. Both hops of a nested tunnel use the
+    /// same one, so this is also the transport the scan and the identity
+    /// provisioning have to be built for.
     pub fn label(&self) -> &'static str {
         match self {
             Transport::Masque => "masque",
             Transport::WireGuard => "wireguard",
+            Transport::Gool => "gool",
+            Transport::Mim => "mim",
         }
+    }
+
+    /// The carrier a nested tunnel is built from: WireGuard for gool, MASQUE
+    /// for everything else.
+    pub fn carrier(&self) -> Transport {
+        match self {
+            Transport::Gool => Transport::WireGuard,
+            Transport::Mim => Transport::Masque,
+            other => *other,
+        }
+    }
+
+    /// True when the tunnel needs two identities instead of one.
+    pub fn needs_inner_identity(&self) -> bool {
+        matches!(self, Transport::Gool | Transport::Mim)
     }
 
     pub fn assigned_port(&self) -> u16 {
         match self {
-            Transport::Masque => 443,
-            Transport::WireGuard => 2408,
+            Transport::Masque | Transport::Mim => 443,
+            Transport::WireGuard | Transport::Gool => 2408,
         }
     }
 
     pub fn default_ports(&self) -> Vec<u16> {
         match self {
-            Transport::Masque => prober::MASQUE_PORTS.to_vec(),
-            Transport::WireGuard => wireguard::WG_PORTS.to_vec(),
+            Transport::Masque | Transport::Mim => prober::MASQUE_PORTS.to_vec(),
+            Transport::WireGuard | Transport::Gool => wireguard::WG_PORTS.to_vec(),
         }
     }
 }
@@ -211,9 +237,12 @@ impl Default for ProvisionRequest {
 }
 
 impl ProvisionRequest {
+    /// The identity a transport needs: MASQUE hops carry a client certificate,
+    /// WireGuard hops do not. A nested tunnel asks for the same thing its
+    /// carrier does, because both of its hops ride on that one protocol.
     pub fn for_transport(transport: Transport) -> Self {
         Self {
-            masque_cert: matches!(transport, Transport::Masque),
+            masque_cert: matches!(transport.carrier(), Transport::Masque),
             ..Default::default()
         }
     }
@@ -256,11 +285,23 @@ impl IdentitySummary {
 pub fn identity_path(base: &str, transport: Transport, team: Option<&str>) -> String {
     match team {
         Some(team) => crate::derive_sibling_path(base, &format!("team-{team}")),
-        None => match transport {
+        None => match transport.carrier() {
             Transport::Masque => crate::derive_sibling_path(base, "masque"),
             Transport::WireGuard => base.to_string(),
+            // A nested tunnel is carried by one of the two above, so the
+            // outer identity lands where its carrier already expects it.
+            Transport::Gool | Transport::Mim => base.to_string(),
         },
     }
+}
+
+/// The outer and inner identities of a nested tunnel. A nested tunnel needs
+/// two of them because each hop terminates on a different Cloudflare device;
+/// the inner one is named the way `run_gool` and `run_mim` already name it.
+pub fn nested_identity_paths(base: &str, transport: Transport, team: Option<&str>) -> (String, String) {
+    let outer = identity_path(base, transport, team);
+    let inner = crate::derive_sibling_path(&outer, "secondary");
+    (outer, inner)
 }
 
 pub fn lastconn_path(identity_path: &str) -> String {
@@ -454,6 +495,9 @@ pub struct TunnelSpec {
     pub aethernoize: aethernoize::AetherNoizeConfig,
     pub keepalive: u16,
     pub verify_timeout: Duration,
+    /// The inner hop of a nested tunnel, when it has been pinned by hand. A
+    /// nested tunnel picks its own second hop when this is `None`.
+    pub inner_peer: Option<SocketAddr>,
 }
 
 impl TunnelSpec {
@@ -466,6 +510,7 @@ impl TunnelSpec {
             aethernoize: aethernoize::from_profile("balanced"),
             keepalive: 5,
             verify_timeout: Duration::from_secs(10),
+            inner_peer: None,
         }
     }
 
@@ -481,6 +526,11 @@ impl TunnelSpec {
 
     pub fn with_profile(mut self, profile: &str) -> Self {
         self.aethernoize = aethernoize::from_profile(profile);
+        self
+    }
+
+    pub fn with_inner_peer(mut self, peer: SocketAddr) -> Self {
+        self.inner_peer = Some(peer);
         self
     }
 }
@@ -560,7 +610,77 @@ pub async fn connect(
             );
             guard(cancel, attempt).await
         }
+        // A nested tunnel needs two identities; `connect_nested` takes those.
+        Transport::Gool | Transport::Mim => Err(AetherError::Other(format!(
+            "{} needs an inner identity; use connect_nested instead of connect",
+            spec.transport.label()
+        ))),
     }
+}
+
+/// The nested tunnels: a `gool` tunnel runs WireGuard inside WireGuard, and a
+/// `mim` tunnel runs MASQUE inside MASQUE. Each one terminates on two different
+/// Cloudflare devices, so it needs two identities: the outer one the network
+/// sees, and an inner one the tunnel itself provisions.
+pub async fn connect_nested(
+    outer: &Identity,
+    inner: &Identity,
+    peer: SocketAddr,
+    spec: &TunnelSpec,
+    cancel: &Cancel,
+) -> Result<()> {
+    match spec.http {
+        Some(listen) => std::env::set_var("AETHER_HTTP_PROXY", listen.to_string()),
+        None => std::env::remove_var("AETHER_HTTP_PROXY"),
+    }
+
+    match spec.transport {
+        Transport::Gool => {
+            let outer_peer = inner_peer_or_die(peer, spec.inner_peer, "the inner gool hop")?;
+            let attempt = crate::run_warp_in_warp(
+                outer.clone(),
+                inner.clone(),
+                peer,
+                outer_peer,
+                spec.socks,
+            );
+            guard(cancel, attempt).await
+        }
+        Transport::Mim => {
+            let outer_peer = inner_peer_or_die(peer, spec.inner_peer, "the inner masque hop")?;
+            let attempt = crate::run_masque_in_masque(
+                outer,
+                inner,
+                peer,
+                std::slice::from_ref(&outer_peer),
+                spec.ech.clone(),
+                spec.socks,
+            );
+            guard(cancel, attempt).await
+        }
+        // A single-identity transport has no inner hop to dial through.
+        Transport::Masque | Transport::WireGuard => Err(AetherError::Other(format!(
+            "{} is not a nested tunnel; use connect instead of connect_nested",
+            spec.transport.label()
+        ))),
+    }
+}
+
+fn inner_peer_or_die(
+    outer: SocketAddr,
+    inner: Option<SocketAddr>,
+    what: &str,
+) -> Result<SocketAddr> {
+    let inner = inner.ok_or_else(|| {
+        AetherError::Other(format!("{what} was not chosen; the nested scan should have set it"))
+    })?;
+    if inner.ip() == outer.ip() {
+        return Err(AetherError::Other(format!(
+            "the two hops of a nested tunnel need separate edges, but both point at {}",
+            outer.ip()
+        )));
+    }
+    Ok(inner)
 }
 
 #[cfg(test)]
@@ -574,6 +694,32 @@ mod tests {
         assert_eq!(Transport::parse("warp"), Transport::WireGuard);
         assert_eq!(Transport::parse("masque"), Transport::Masque);
         assert_eq!(Transport::parse("anything else"), Transport::Masque);
+    }
+
+    #[test]
+    fn the_nested_transports_read_the_same_names_the_cli_uses() {
+        for written in ["gool", "wiw", "WARP-in-WARP"] {
+            assert_eq!(Transport::parse(written), Transport::Gool, "{written}");
+        }
+        for written in ["mim", "m2", "MASQUE-in-MASQUE"] {
+            assert_eq!(Transport::parse(written), Transport::Mim, "{written}");
+        }
+    }
+
+    #[test]
+    fn a_nested_tunnel_rides_on_one_carrier() {
+        assert_eq!(Transport::Gool.carrier(), Transport::WireGuard);
+        assert_eq!(Transport::Mim.carrier(), Transport::Masque);
+        assert_eq!(Transport::Masque.carrier(), Transport::Masque);
+        assert_eq!(Transport::WireGuard.carrier(), Transport::WireGuard);
+    }
+
+    #[test]
+    fn only_the_nested_transports_ask_for_a_second_identity() {
+        assert!(Transport::Gool.needs_inner_identity());
+        assert!(Transport::Mim.needs_inner_identity());
+        assert!(!Transport::Masque.needs_inner_identity());
+        assert!(!Transport::WireGuard.needs_inner_identity());
     }
 
     #[test]
@@ -635,6 +781,24 @@ mod tests {
     }
 
     #[test]
+    fn a_nested_tunnel_keeps_two_identities_apart() {
+        let (outer, inner) = nested_identity_paths("aether.toml", Transport::Gool, None);
+        assert_eq!(outer, "aether.toml");
+        assert_eq!(inner, "aether-secondary.toml");
+
+        let (outer, inner) = nested_identity_paths("aether.toml", Transport::Mim, None);
+        assert_eq!(outer, "aether-masque.toml");
+        assert_eq!(inner, "aether-masque-secondary.toml");
+    }
+
+    #[test]
+    fn a_nested_tunnel_in_a_team_keeps_the_team_on_the_outer_path() {
+        let (outer, inner) = nested_identity_paths("aether.toml", Transport::Mim, Some("acme"));
+        assert_eq!(outer, "aether-team-acme.toml");
+        assert_eq!(inner, "aether-team-acme-secondary.toml");
+    }
+
+    #[test]
     fn a_scan_request_starts_from_the_defaults_the_cli_uses() {
         let masque = ScanRequest::for_transport(Transport::Masque);
         assert_eq!(masque.mode, "balanced");
@@ -652,9 +816,55 @@ mod tests {
         assert_eq!(spec.socks.port(), 1819);
         assert!(spec.socks.ip().is_loopback());
         assert!(spec.http.is_none());
+        assert!(spec.inner_peer.is_none());
 
         let with_http = spec.with_http(SocketAddr::from(([127, 0, 0, 1], 8086)));
         assert_eq!(with_http.http.map(|addr| addr.port()), Some(8086));
+    }
+
+    #[test]
+    fn a_nested_tunnel_names_its_inner_hop() {
+        let peer: SocketAddr = "188.114.96.1:443".parse().unwrap();
+        let spec = TunnelSpec::for_transport(Transport::Mim).with_inner_peer(peer);
+        assert_eq!(spec.inner_peer, Some(peer));
+    }
+
+    #[test]
+    fn a_masque_provision_asks_for_the_certificate_a_warp_one_does_not() {
+        assert!(ProvisionRequest::for_transport(Transport::Masque).masque_cert);
+        assert!(ProvisionRequest::for_transport(Transport::Mim).masque_cert);
+        assert!(!ProvisionRequest::for_transport(Transport::WireGuard).masque_cert);
+        assert!(!ProvisionRequest::for_transport(Transport::Gool).masque_cert);
+    }
+
+    #[test]
+    fn a_nested_tunnel_carries_the_ports_its_carrier_uses() {
+        assert!(Transport::Mim.default_ports().contains(&443));
+        assert!(Transport::Gool.default_ports().contains(&2408));
+    }
+
+    #[test]
+    fn a_nested_tunnel_rejects_one_edge_serving_as_both_hops() {
+        let outer: SocketAddr = "162.159.192.1:2408".parse().unwrap();
+        let same_ip: SocketAddr = "162.159.192.1:500".parse().unwrap();
+        let err = inner_peer_or_die(outer, Some(same_ip), "the inner gool hop")
+            .expect_err("the same edge twice is not a nested tunnel");
+        assert!(err.to_string().contains("162.159.192.1"));
+    }
+
+    #[test]
+    fn a_nested_tunnel_without_a_chosen_inner_hop_is_reported() {
+        let outer: SocketAddr = "162.159.192.1:2408".parse().unwrap();
+        let err = inner_peer_or_die(outer, None, "the inner gool hop")
+            .expect_err("a missing hop is an error");
+        assert!(err.to_string().contains("not chosen"));
+    }
+
+    #[test]
+    fn a_nested_tunnel_accepts_two_separate_edges() {
+        let outer: SocketAddr = "162.159.192.1:2408".parse().unwrap();
+        let inner: SocketAddr = "188.114.96.1:2408".parse().unwrap();
+        assert_eq!(inner_peer_or_die(outer, Some(inner), "hop").unwrap(), inner);
     }
 
     #[tokio::test]

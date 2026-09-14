@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html class="dark" lang="en">
+<html lang="en">
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
@@ -11,25 +11,24 @@
   <div class="brand">
     <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
       <defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#ffd7a8"/><stop offset="0.5" stop-color="#f2711c"/><stop offset="1" stop-color="#9e4300"/>
+        <stop offset="0" stop-color="#ffdcc1"/><stop offset="0.55" stop-color="#8a5a2e"/><stop offset="1" stop-color="#6e4319"/>
       </linearGradient></defs>
-      <rect x="1.5" y="1.5" width="29" height="29" rx="9" fill="#141417" stroke="#2a2a30"/>
+      <rect x="1.5" y="1.5" width="29" height="29" rx="14" fill="#f4dbc3"/>
       <path d="M16 7.5 L23 24 H19.4 L18.1 20.6 H13.9 L12.6 24 H9 Z M14.9 17.6 H17.1 L16 14.2 Z" fill="url(#ag)"/>
     </svg>
-    <div class="brand-text">
+    <div class="brand">
       <span class="brand-name">Aether</span>
       <span class="tag" id="version-tag">v2.0.0</span>
     </div>
   </div>
   <button class="icon-btn" id="header-mode-btn" title="Routing mode" type="button">
-    <span class="mode-chip" id="header-mode-chip">PROXY</span>
+    <span class="tag" id="header-mode-chip">PROXY</span>
   </button>
 </header>
 
 <main id="main">
   <!-- ============================ PROXY ============================ -->
   <section class="view active" id="view-proxy">
-    <!-- Routing mode: real switch between the SOCKS5 proxy and the system-wide VPN -->
     <div class="seg" id="mode-group" role="group" aria-label="Routing mode">
       <button class="seg-btn active" data-mode="proxy" type="button">
         <span>Proxy (SOCKS5)</span>
@@ -41,54 +40,59 @@
       </button>
     </div>
 
-    <button class="route-card" id="route-card" type="button">
-      <span class="route-dot" id="route-dot"></span>
-      <span class="route-title" id="route-title">Smart Routing</span>
-      <span class="route-sub" id="route-sub">Auto-negotiate · fastest verified path</span>
-      <span class="route-ping" id="route-ping">-- ms</span>
-    </button>
-
     <div class="hero">
-      <div class="aura" id="glow-aura"></div>
-      <div class="orb-wrap" id="button-container">
-        <div class="ripple" id="ripple-wave"></div>
-        <svg class="orbital" viewBox="0 0 208 208" aria-hidden="true">
-          <circle class="orbital-track" cx="104" cy="104" r="92" fill="none" stroke-width="2.5"/>
-          <circle class="orbital-arc" id="progress-arc" cx="104" cy="104" r="92" fill="none" stroke-width="2.5"
-                  stroke-dasharray="578" stroke-dashoffset="578" stroke-linecap="round"/>
+      <div class="dial-wrap">
+        <svg class="dial-ring" viewBox="0 0 224 224" aria-hidden="true">
+          <circle cx="112" cy="112" r="108" fill="none" stroke="#8a5a2e" stroke-width="1.5" opacity="0.4" id="ring-track"/>
+          <circle cx="112" cy="112" r="108" fill="none" stroke="#8a5a2e" stroke-width="2" stroke-dasharray="140 500" stroke-linecap="round" class="hidden spin" id="ring-spinner" style="transform-origin:112px 112px"/>
         </svg>
-        <button class="power" id="main-power-btn" aria-label="Toggle tunnel" type="button">
-          <span class="power-well" id="power-inner-well">
-            <svg id="icon-power" class="power-icon" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg>
-            <svg id="icon-sync" class="power-icon hidden spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
-            <svg id="icon-stop" class="power-icon hidden" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-            <svg id="icon-error" class="power-icon hidden" viewBox="0 0 24 24"><path d="M12 8v5"/><circle cx="12" cy="16.5" r="0.6"/><path d="M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
-          </span>
+        <button class="dial-btn" id="main-power-btn" aria-label="Toggle tunnel" type="button">
+          <svg class="dial-glyph" id="icon-power" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg>
+          <svg class="dial-glyph hidden" id="icon-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          <svg class="dial-glyph hidden" id="icon-error" viewBox="0 0 24 24"><path d="M12 8v5"/><circle cx="12" cy="16.5" r="0.6"/><path d="M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          <span class="dial-subtext" id="button-subtext">Tap to connect</span>
         </button>
       </div>
       <div class="hero-status">
-        <div class="hero-status-head">
-          <span class="live-dot" id="live-indicator-dot"></span>
-          <h2 id="status-primary-text">Disconnected</h2>
-        </div>
-        <p class="mono dim" id="status-sub-text">Tap the dial to establish a verified tunnel</p>
+        <h2 id="status-primary-text">Disconnected</h2>
+        <p class="dim" id="status-sub-text">Tap the dial to establish a verified tunnel</p>
       </div>
     </div>
 
     <div class="stats">
       <div class="stat">
-        <div class="stat-head"><span>Latency</span><span class="mono dim" id="stat-latency-hint">verified</span></div>
+        <div class="stat-head"><span>Public IP</span><span class="mono dim" id="stat-exit-hint">edge</span></div>
+        <div class="stat-value small truncate"><span id="stat-exit">--</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-head"><span>Latency</span><span class="mono dim">verified</span></div>
         <div class="stat-value"><span id="stat-latency">--</span><small>ms</small></div>
       </div>
       <div class="stat">
-        <div class="stat-head"><span>Exit</span><span class="mono dim" id="stat-exit-hint">edge</span></div>
-        <div class="stat-value small"><span id="stat-exit">--</span></div>
+        <div class="stat-head"><span>Mode</span></div>
+        <div class="stat-value small truncate"><span id="current-mode-label">MASQUE</span></div>
       </div>
       <div class="stat">
-        <div class="stat-head"><span>Uptime</span><span class="mono dim">session</span></div>
+        <div class="stat-head"><span>Uptime</span></div>
         <div class="stat-value small"><span id="card-uptime">00m 00s</span></div>
       </div>
     </div>
+
+    <button class="card-row card-kv" id="mode-row-btn" type="button">
+      <span class="label-uppercase">Mode</span>
+      <span class="row" style="gap:8px">
+        <span class="label-md" id="mode-row-value" style="font-weight:600">MASQUE</span>
+        <svg class="ic" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+      </span>
+    </button>
+
+    <button class="card-row card-kv" id="scan-row-btn" type="button">
+      <span class="label-uppercase">Scan</span>
+      <span class="row" style="gap:8px">
+        <span class="label-md" id="scan-row-value" style="font-weight:600">IPv4 · Balanced</span>
+        <svg class="ic" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+      </span>
+    </button>
 
     <div class="drawer" id="drawer">
       <button class="drawer-head" id="details-toggle-btn" type="button" aria-expanded="false">
@@ -96,43 +100,26 @@
           <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
           Engine telemetry
         </span>
-        <span class="drawer-right">
+        <span class="row" style="gap:8px">
           <span class="pill" id="details-badge">idle</span>
           <svg class="ic chev" id="drawer-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
         </span>
       </button>
       <div class="drawer-body hidden" id="details-drawer-content">
         <div class="row">
-          <div>
-            <span class="row-label">SOCKS5 ingress</span>
-            <span class="mono" id="socks-address">127.0.0.1:1819</span>
-          </div>
-          <button class="icon-btn small" id="copy-endpoint-btn" title="Copy endpoint" type="button">
-            <svg class="ic" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-          </button>
+          <span class="row-label">SOCKS5 endpoint</span>
+          <span class="mono" id="socks-address">127.0.0.1:1819</span>
         </div>
         <div class="rows">
           <div class="row"><span class="row-label">Routing mode</span><span class="mono" id="detail-mode">Proxy</span></div>
           <div class="row"><span class="row-label">VPN service</span><span class="mono" id="detail-vpn">not requested</span></div>
           <div class="row"><span class="row-label">Active protocol</span><span class="mono" id="protocol-name-display">--</span></div>
           <div class="row"><span class="row-label">Transport</span><span class="mono" id="detail-transport">--</span></div>
-          <div class="row"><span class="row-label">Tunnel MTU</span><span class="mono" id="detail-mtu">--</span></div>
           <div class="row"><span class="row-label">Exit edge</span><span class="mono" id="detail-edge">--</span></div>
           <div class="row"><span class="row-label">WARP</span><span class="mono" id="detail-warp">--</span></div>
           <div class="row"><span class="row-label">Session</span><span class="mono" id="stat-uptime">00m 00s</span></div>
         </div>
       </div>
-    </div>
-
-    <div class="summary">
-      <div class="summary-left">
-        <span class="summary-dot" id="summary-dot"></span>
-        <div>
-          <p class="summary-title" id="active-engine-title">No active engine</p>
-          <p class="mono dim" id="active-engine-sub">Protocol and obfuscation are chosen in Settings</p>
-        </div>
-      </div>
-      <button class="ghost-link" id="goto-settings" type="button">Edit</button>
     </div>
   </section>
 
@@ -148,73 +135,89 @@
         <button class="icon-btn" id="copy-log" title="Copy log stream" type="button">
           <svg class="ic" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
         </button>
-        <button class="icon-btn" id="clearLog" title="Clear log" type="button">
+        <button class="icon-btn" id="clear-log" title="Clear log" type="button">
           <svg class="ic" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>
         </button>
       </div>
     </div>
-    <div class="terminal">
-      <div class="terminal-head">
-        <span class="term-dot"></span>
-        <span class="mono dim">aether core · stdout/stderr</span>
-        <span class="mono dim right" id="term-engine">idle</span>
-      </div>
-      <div class="feed" id="logbox">
-        <div class="lg-empty">Listening for core events…</div>
-      </div>
-      <div class="toast" id="copy-toast">Stream copied</div>
+    <div class="feed" id="logbox">
+      <div class="lg-empty">Listening for core events…</div>
     </div>
-    <footer class="foot">
-      <span class="pulse"><span class="pulse-ring"></span><span class="pulse-core"></span></span>
-      <span class="mono" id="stream-status">Listening · 0 events · 0 errors</span>
-    </footer>
+    <div class="foot">
+      <span class="foot-dot"></span>
+      <span class="foot-text truncate" id="stream-status">Listening · 0 events · 0 errors</span>
+    </div>
   </section>
 
   <!-- ============================ SETTINGS ============================ -->
   <section class="view" id="view-settings">
-    <div class="card">
-      <div class="card-head">
-        <span class="card-title">Routing mode</span>
-        <span class="mono dim" id="mode-hint">Proxy only · nothing else is redirected</span>
-      </div>
-      <div class="seg compact" id="mode-group-settings" role="group" aria-label="Routing mode">
-        <button class="seg-btn active" data-mode="proxy" type="button">Proxy</button>
-        <button class="seg-btn" data-mode="vpn" type="button">VPN</button>
-      </div>
+    <div class="seg" id="settings-tab-group" role="group" aria-label="Settings sections">
+      <button class="seg-btn active" data-tab="basic" type="button">Basic</button>
+      <button class="seg-btn" data-tab="advanced" type="button">Advanced</button>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <span class="card-title">Protocol</span>
-        <span class="mono dim">L4 framing</span>
+    <div id="settings-basic" style="display:flex;flex-direction:column;gap:20px">
+      <div>
+        <span class="section-label">Tunnel mode</span>
       </div>
-      <div class="menu" id="protocolMenu">
-        <button class="opt" data-val="masque" type="button"><span class="opt-label">MASQUE / HTTP/3</span><span class="opt-desc">QUIC carrier</span></button>
-        <button class="opt" data-val="masque-h2" type="button"><span class="opt-label">MASQUE / HTTP/2</span><span class="opt-desc">TCP carrier, survives UDP filtering</span></button>
-        <button class="opt" data-val="wg" type="button"><span class="opt-label">WireGuard</span><span class="opt-desc">classic, fastest</span></button>
+      <div class="card-flat">
+        <div class="seg" id="mode-group-settings" role="group" aria-label="Routing mode">
+          <button class="seg-btn active" data-mode="proxy" type="button">Proxy</button>
+          <button class="seg-btn" data-mode="vpn" type="button">VPN</button>
+        </div>
+        <p class="hint">VPN mode routes every app through the tunnel. Proxy mode only serves apps you point at the SOCKS5 port.</p>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="card-head">
-        <span class="card-title">Scan mode</span>
-        <span class="mono dim" id="scanHint">balanced</span>
+      <div>
+        <span class="section-label">Protocol</span>
       </div>
-      <div class="seg compact wrap" id="scan-group">
+      <div class="menu" id="protocol-menu">
+        <button class="opt" data-val="masque" type="button">
+          <span><span class="opt-label">MASQUE / HTTP/3</span><span class="opt-desc">QUIC carrier · default</span></span>
+          <span class="opt-check"><svg class="ic" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg></span>
+        </button>
+        <button class="opt" data-val="masque-h2" type="button">
+          <span><span class="opt-label">MASQUE / HTTP/2</span><span class="opt-desc">TCP carrier, survives UDP filtering</span></span>
+          <span class="opt-check"><svg class="ic" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg></span>
+        </button>
+        <button class="opt" data-val="wg" type="button">
+          <span><span class="opt-label">WireGuard</span><span class="opt-desc">classic, fastest</span></span>
+          <span class="opt-check"><svg class="ic" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg></span>
+        </button>
+        <button class="opt" data-val="gool" type="button">
+          <span><span class="opt-label">WARP-in-WARP</span><span class="opt-desc">two WireGuard hops, deeper masking</span></span>
+          <span class="opt-check"><svg class="ic" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg></span>
+        </button>
+        <button class="opt" data-val="mim" type="button">
+          <span><span class="opt-label">MASQUE-in-MASQUE</span><span class="opt-desc">two MASQUE hops, different exit</span></span>
+          <span class="opt-check"><svg class="ic" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg></span>
+        </button>
+      </div>
+
+      <div>
+        <span class="section-label">IP version</span>
+      </div>
+      <div class="seg" id="ip-group" role="group" aria-label="IP version">
+        <button class="seg-btn active" data-group="ip_family" data-val="v4" type="button">IPv4</button>
+        <button class="seg-btn" data-group="ip_family" data-val="v6" type="button">IPv6</button>
+        <button class="seg-btn" data-group="ip_family" data-val="both" type="button">Both</button>
+      </div>
+
+      <div>
+        <span class="section-label">Scan mode</span>
+      </div>
+      <div class="seg wrap" id="scan-group" role="group" aria-label="Scan mode">
         <button class="seg-btn" data-group="scan" data-val="turbo" type="button">Turbo</button>
         <button class="seg-btn active" data-group="scan" data-val="balanced" type="button">Balanced</button>
         <button class="seg-btn" data-group="scan" data-val="thorough" type="button">Thorough</button>
         <button class="seg-btn" data-group="scan" data-val="stealth" type="button">Stealth</button>
         <button class="seg-btn" data-group="scan" data-val="ironclad" type="button">Ironclad</button>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="card-head">
-        <span class="card-title">Obfuscation</span>
-        <span class="mono dim" id="obfHint">firewall</span>
+      <div>
+        <span class="section-label">Obfuscation</span>
       </div>
-      <div class="seg compact wrap">
+      <div class="seg wrap" id="obf-group" role="group" aria-label="Obfuscation profile">
         <button class="seg-btn" data-group="obfuscation" data-val="off" type="button">Off</button>
         <button class="seg-btn" data-group="obfuscation" data-val="light" type="button">Light</button>
         <button class="seg-btn active" data-group="obfuscation" data-val="firewall" type="button">Firewall</button>
@@ -222,43 +225,135 @@
         <button class="seg-btn" data-group="obfuscation" data-val="gfw" type="button">GFW</button>
         <button class="seg-btn" data-group="obfuscation" data-val="aggressive" type="button">Aggressive</button>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="card-head">
-        <span class="card-title">Pinned edge</span>
-        <span class="mono dim">optional</span>
+      <div>
+        <span class="section-label">Pinned edge (optional)</span>
       </div>
-      <input class="text-input" id="serverInput" placeholder="162.159.192.1:2408 — blank scans instead" spellcheck="false" type="text"/>
-      <p class="hint mono dim">Empty means the core scans and picks the fastest verified edge.</p>
+      <div class="card-flat">
+        <input class="text-input" id="server-input" placeholder="162.159.192.1:2408 — blank scans instead" spellcheck="false" type="text"/>
+        <p class="hint">Empty means the core scans and picks the fastest verified edge. Nested protocols accept a second hop below.</p>
+        <input class="text-input" id="inner-server-input" placeholder="inner hop: 188.114.96.1:2408 (gool / mim)" spellcheck="false" type="text"/>
+      </div>
     </div>
 
-    <div class="card">
-      <div class="card-head"><span class="card-title">Session</span></div>
-      <div class="row"><span class="row-label">SOCKS5 ingress</span><span class="mono">127.0.0.1:1819</span></div>
-      <div class="row"><span class="row-label">Settings file</span><span class="mono dim">settings.json (app data dir)</span></div>
+    <div id="settings-advanced" style="display:none;flex-direction:column;gap:20px">
+      <div>
+        <span class="section-label">Local bind &amp; resolution</span>
+      </div>
+      <div class="card-flat">
+        <div>
+          <label class="label-md dim" style="display:block;margin-bottom:6px">SOCKS5 inbound address</label>
+          <input class="text-input" id="socks-input" readonly value="127.0.0.1:1819" type="text"/>
+        </div>
+        <div>
+          <label class="label-md dim" style="display:block;margin-bottom:6px">Upstream DNS resolvers</label>
+          <input class="text-input" id="dns-input" placeholder="1.1.1.1, 1.0.0.1" spellcheck="false" type="text"/>
+        </div>
+      </div>
+
+      <div>
+        <span class="section-label">Split routing</span>
+      </div>
+      <div class="card-flat">
+        <div>
+          <label class="label-md dim" style="display:block;margin-bottom:6px">Never route through the tunnel</label>
+          <textarea class="text-input" id="route-direct-input" placeholder="192.168.1.0/24&#10;*.local&#10;internal.corp" spellcheck="false"></textarea>
+        </div>
+        <div>
+          <label class="label-md dim" style="display:block;margin-bottom:6px">Always route through the tunnel</label>
+          <textarea class="text-input" id="route-block-input" placeholder="example.com&#10;10.0.0.0/8" spellcheck="false"></textarea>
+        </div>
+        <p class="hint">Entries may be a domain, a keyword, a regexp, a CIDR, or a port. Block is checked first, then direct, then the tunnel.</p>
+      </div>
+
+      <div>
+        <span class="section-label">Zero Trust</span>
+      </div>
+      <div class="card-flat">
+        <div>
+          <label class="label-md dim" style="display:block;margin-bottom:6px">Organization slug</label>
+          <input class="text-input" id="team-input" placeholder="acme-workspace" spellcheck="false" type="text"/>
+        </div>
+        <div>
+          <label class="label-md dim" style="display:block;margin-bottom:6px">Access token</label>
+          <input class="text-input" id="access-token-input" placeholder="a JWT from the team's /warp page" spellcheck="false" type="text"/>
+        </div>
+        <p class="hint">Leave blank for personal WARP. A token enrolls the device into the organization.</p>
+        <button class="btn btn-primary" id="team-signin-btn" type="button">Enroll device</button>
+      </div>
+
+      <div>
+        <span class="section-label">Tor</span>
+      </div>
+      <div class="card-flat">
+        <div class="row">
+          <div>
+            <span class="opt-label">Onion routing</span>
+            <p class="hint" style="margin:2px 0 0">The installed build has no Tor support. Use a release built with the <b>tor</b> feature.</p>
+          </div>
+          <button class="locked toggle" disabled type="button" aria-label="Tor unavailable"></button>
+        </div>
+      </div>
     </div>
 
     <div class="settings-actions">
-      <button class="btn-ghost" id="restoreBtn" type="button">Restore defaults</button>
-      <span class="mono saved hidden" id="savedFlash">saved</span>
+      <button class="btn btn-ghost" id="restore-btn" type="button">Restore defaults</button>
+      <span class="saved hidden" id="saved-flash">saved</span>
     </div>
   </section>
 </main>
 
-<nav class="dock" id="dock">
-  <button class="tab" data-view="proxy" type="button">
-    <svg class="ic" viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M3 3v6h6"/><circle cx="12" cy="12" r="3"/></svg>
-    <span>Proxy</span>
-  </button>
-  <button class="tab" data-view="console" type="button">
-    <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
-    <span>Console</span>
-  </button>
-  <button class="tab" data-view="settings" type="button">
-    <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 7.9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.6 15H3.5a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5 9.4a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 5.6V3.5a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 5a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a2 2 0 1 1 0 4H19.4Z"/></svg>
-    <span>Settings</span>
-  </button>
+<!-- Mode bottom sheet -->
+<div class="sheet-backdrop" id="mode-sheet">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Proxy mode">
+    <span class="sheet-grab"></span>
+    <div class="sheet-title">
+      <div>
+        <h3>Proxy mode</h3>
+        <p>Select your tunnel encapsulation protocol</p>
+      </div>
+      <button class="icon-btn" id="close-mode-sheet" type="button" aria-label="Close">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <div class="menu" id="mode-sheet-options"></div>
+  </div>
+</div>
+
+<!-- Scan bottom sheet -->
+<div class="sheet-backdrop" id="scan-sheet">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Scan profile">
+    <span class="sheet-grab"></span>
+    <div class="sheet-title">
+      <div>
+        <h3>Scan profile</h3>
+        <p>Endpoint discovery depth and verification</p>
+      </div>
+      <button class="icon-btn" id="close-scan-sheet" type="button" aria-label="Close">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+    <div class="menu" id="scan-sheet-options"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Copied</div>
+
+<nav class="dock">
+  <div class="dock-bar">
+    <button class="tab active" data-view="proxy" type="button">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M3 3v6h6"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>Proxy</span>
+    </button>
+    <button class="tab" data-view="console" type="button">
+      <svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/></svg>
+      <span>Console</span>
+    </button>
+    <button class="tab" data-view="settings" type="button">
+      <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 7.9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.6 15H3.5a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5 9.4a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 5.6V3.5a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 5a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a2 2 0 1 1 0 4H19.4Z"/></svg>
+      <span>Settings</span>
+    </button>
+  </div>
 </nav>
 
 <script src="./js/app.js" type="module"></script>

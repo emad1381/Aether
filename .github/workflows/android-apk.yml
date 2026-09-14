@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
   push:
     paths:
+      - "aether/**"
       - "aether-mobile/**"
       - ".github/workflows/android-apk.yml"
 

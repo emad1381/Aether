@@ -1,16 +1,45 @@
-// Aether mobile UI. Everything shown here comes from the in-process core:
-// the engine's own status events, its log stream and the VpnService state.
-// There is no mock mode - if the bridge is missing the UI says so.
+// Aether mobile UI — Calm Peach. Everything shown here comes from the
+// in-process core: the engine's own status events, its log stream and the
+// VpnService state. There is no mock mode — if the bridge is missing the UI
+// says so. No CDN, no webfonts: the app has to work on a network that blocks
+// them.
 
 const tauri = window.__TAURI__;
 const invoke = (cmd, args) => tauri.core.invoke(cmd, args);
 const listen = (evt, cb) => tauri.event.listen(evt, (e) => cb(e.payload));
 const $ = (id) => document.getElementById(id);
 
-const MTU_BY_PROTOCOL = { 'masque': '1280 bytes (QUIC)', 'masque-h2': '1500 bytes (TCP)' };
-const TRANSPORT_BY_PROTOCOL = { 'masque': 'MASQUE over HTTP/3 QUIC', 'masque-h2': 'MASQUE over HTTP/2 TCP', 'wg': 'WireGuard over UDP' };
+const TRANSPORT_BY_PROTOCOL = {
+  masque: 'MASQUE over HTTP/3 QUIC',
+  'masque-h2': 'MASQUE over HTTP/2 TCP',
+  wg: 'WireGuard over UDP',
+  gool: 'WireGuard inside WireGuard',
+  mim: 'MASQUE inside MASQUE',
+};
+const PROTOCOL_LABEL = {
+  masque: 'MASQUE / HTTP/3',
+  'masque-h2': 'MASQUE / HTTP/2',
+  wg: 'WireGuard',
+  gool: 'WARP-in-WARP',
+  mim: 'MASQUE-in-MASQUE',
+};
+const MODE_OPTIONS = [
+  { val: 'masque', label: 'MASQUE', desc: 'Default · HTTP/3 QUIC datagram tunnel' },
+  { val: 'masque-h2', label: 'MASQUE / HTTP/2', desc: 'TCP carrier · survives UDP filtering' },
+  { val: 'wg', label: 'WireGuard', desc: 'High throughput · low latency UDP' },
+  { val: 'gool', label: 'WARP-in-WARP', desc: 'Dual-hop routing for deeper masking' },
+  { val: 'mim', label: 'MASQUE-in-MASQUE', desc: 'Cascaded HTTP/3 multi-hop relay' },
+];
+const SCAN_OPTIONS = [
+  { val: 'turbo', label: 'Turbo', desc: 'Stop at the first candidate that answers' },
+  { val: 'balanced', label: 'Balanced', desc: 'Collect a few, keep the fastest' },
+  { val: 'thorough', label: 'Thorough', desc: 'Sweep whole ranges when all looks blocked' },
+  { val: 'stealth', label: 'Stealth', desc: 'Few probes in flight, for strict networks' },
+  { val: 'ironclad', label: 'Ironclad', desc: 'A real tunnel and a real request per gateway' },
+];
+const SCAN_LABEL = { turbo: 'Turbo', balanced: 'Balanced', thorough: 'Thorough', stealth: 'Stealth', ironclad: 'Ironclad' };
 
-let settings = { protocol: 'masque', scan: 'balanced', obfuscation: 'firewall', server: '' };
+let settings = { protocol: 'masque', scan: 'balanced', obfuscation: 'firewall', server: '', inner_server: '', ip_family: 'v4', dns: '', route_block: '', route_direct: '', team: '', access_email: '', access_token: '', access_id: '', access_secret: '' };
 let status = { phase: 'disconnected', detail: 'Disconnected', protocol: '', latency_ms: null, socks: '127.0.0.1:1819' };
 let mode = 'proxy';
 let vpn = { state: 'off', detail: 'not requested' };
@@ -27,9 +56,6 @@ function showView(name) {
 
 function setupDock() {
   document.querySelectorAll('.dock .tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
-  document.querySelectorAll('[data-path]').forEach((a) => a.addEventListener('click', () => showView(a.dataset.path)));
-  $('goto-settings').addEventListener('click', () => showView('settings'));
-  $('route-card').addEventListener('click', () => showView('settings'));
   showView('proxy');
 }
 
@@ -45,30 +71,18 @@ function renderStatus() {
   power.classList.toggle('busy', busy);
   power.classList.toggle('err', p === 'error');
   $('icon-power').classList.toggle('hidden', p === 'connected' || busy || p === 'error');
-  $('icon-sync').classList.toggle('hidden', !busy);
   $('icon-stop').classList.toggle('hidden', p !== 'connected');
   $('icon-error').classList.toggle('hidden', p !== 'error');
+  $('ring-spinner').classList.toggle('hidden', !busy);
 
-  $('progress-arc').classList.toggle('ok', p === 'connected');
-  $('progress-arc').style.strokeDashoffset = p === 'connected' ? '0' : busy ? '289' : '578';
-  $('glow-aura').classList.toggle('ok', p === 'connected');
+  $('button-subtext').textContent = p === 'connected' ? 'Active & secure' : busy ? 'Routing traffic…' : p === 'error' ? 'Failed — try again' : 'Tap to connect';
 
-  const dot = $('live-indicator-dot');
-  dot.className = 'live-dot' + (p === 'connected' ? ' ok' : p === 'error' ? ' err' : busy ? ' busy' : '');
   $('status-primary-text').textContent = p === 'connected' ? 'Connected' : p === 'error' ? 'Connection failed' : busy ? 'Establishing…' : 'Disconnected';
   $('status-sub-text').textContent = status.detail || (p === 'connected' ? 'Tunnel verified end to end' : 'Tap the dial to establish a verified tunnel');
-
-  const routeDot = $('route-dot');
-  routeDot.className = 'route-dot' + (p === 'connected' ? ' ok' : p === 'error' ? ' err' : busy ? ' busy' : '');
-  $('route-title').textContent = mode === 'vpn' ? 'System-wide VPN' : 'Local SOCKS5 proxy';
-  $('route-sub').textContent = p === 'connected'
-    ? (status.protocol || 'engine running')
-    : (mode === 'vpn' ? 'VpnService · every app' : 'apps you point at 127.0.0.1:1819');
 
   const lat = status.latency_ms;
   $('stat-latency').textContent = lat != null ? String(lat) : '--';
   $('stat-latency').parentElement.classList.toggle('dim', lat == null);
-  $('route-ping').textContent = lat != null ? lat + ' ms' : '-- ms';
 
   const exit = status.exit_ip ? (status.colo ? status.colo + ' · ' + status.exit_ip : status.exit_ip) : '--';
   $('stat-exit').textContent = exit;
@@ -76,24 +90,24 @@ function renderStatus() {
 
   $('socks-address').textContent = status.socks || '127.0.0.1:1819';
   $('protocol-name-display').textContent = status.protocol || '--';
-  $('detail-transport').textContent = TRANSPORT_BY_PROTOCOL[settings.protocol] || '--';
-  $('detail-mtu').textContent = MTU_BY_PROTOCOL[settings.protocol] || '--';
+  $('detail-transport').textContent = TRANSPORT_BY_PROTOCOL[baseProtocol(settings.protocol)] || '--';
   $('detail-edge').textContent = status.exit_ip ? [status.colo, status.loc, status.exit_ip].filter(Boolean).join(' · ') : '--';
   $('detail-warp').textContent = status.warp || '--';
-  $('active-engine-title').textContent = p === 'connected' ? (status.protocol || 'Engine running') : p === 'error' ? 'Engine stopped' : 'No active engine';
-  $('active-engine-sub').textContent = p === 'connected' ? 'Serving ' + (status.socks || '127.0.0.1:1819') : 'Protocol and obfuscation are chosen in Settings';
 
   const badge = $('details-badge');
   badge.textContent = p;
   badge.className = 'pill' + (p === 'connected' ? ' ok' : p === 'error' ? ' err' : busy ? ' busy' : '');
-  $('term-engine').textContent = mode === 'vpn' ? 'vpn · ' + vpn.state : 'proxy';
   $('header-mode-chip').textContent = mode === 'vpn' ? 'VPN' : 'PROXY';
-  $('header-mode-chip').classList.toggle('vpn', mode === 'vpn');
-  $('mode-hint').textContent = mode === 'vpn'
-    ? 'System-wide · the VpnService captures every app'
-    : 'Proxy only · nothing else is redirected';
   $('detail-mode').textContent = mode === 'vpn' ? 'VPN (VpnService)' : 'Proxy (SOCKS5)';
   $('detail-vpn').textContent = vpn.state + (vpn.detail ? ' · ' + vpn.detail : '');
+}
+
+/* A nested protocol is carried by one of the two base transports, so the
+ * transport line in telemetry always names the carrier. */
+function baseProtocol(p) {
+  if (p === 'gool') return 'wg';
+  if (p === 'mim') return 'masque';
+  return p;
 }
 
 function renderUptime() {
@@ -166,12 +180,9 @@ function setupDetails() {
     head.setAttribute('aria-expanded', String(!hidden));
     $('drawer-chevron').classList.toggle('open', !hidden);
   });
-  $('copy-endpoint-btn').addEventListener('click', async () => {
-    await copyText(status.socks || '127.0.0.1:1819', 'Endpoint copied');
-  });
 }
 
-/* -------------------------------------------------------------- console */
+/* ------------------------------------------------------------- console */
 const EVENT_WORDS = ['validated', 'listening', 'connected', 'selected', 'chosen', 'ready', 'exposing', 'confirmed'];
 
 function classify(line) {
@@ -194,7 +205,7 @@ function badgeFor(msg) {
 function stamp() {
   const d = new Date();
   const pad = (n, w = 2) => String(n).padStart(w, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function renderLogLine(line) {
@@ -204,12 +215,17 @@ function renderLogLine(line) {
 
   const kind = classify(line);
   const el = document.createElement('div');
-  el.className = 'lg ' + kind;
+  el.className = 'lg t-' + kind;
   el.dataset.type = kind === 'err' ? 'errors' : kind === 'ev' ? 'events' : 'info';
-  const t = document.createElement('span'); t.className = 't'; t.textContent = stamp();
-  const b = document.createElement('span'); b.className = 'b'; b.textContent = badgeFor(line.message || '');
-  const m = document.createElement('span'); m.className = 'm'; m.textContent = line.message || '';
-  el.append(t, b, m);
+
+  const head = document.createElement('div');
+  head.className = 'lg-head';
+  const badge = document.createElement('span'); badge.className = 'lg-badge'; badge.textContent = badgeFor(line.message || '');
+  const time = document.createElement('span'); time.className = 'lg-time'; time.textContent = stamp();
+  head.append(badge, time);
+
+  const msg = document.createElement('span'); msg.className = 'lg-msg'; msg.textContent = line.message || '';
+  el.append(head, msg);
   box.appendChild(el);
 
   if (kind === 'ev') counters.events += 1;
@@ -238,7 +254,7 @@ function setupConsole() {
       document.querySelectorAll('.lg').forEach(applyFilter);
     })
   );
-  $('clearLog').addEventListener('click', () => {
+  $('clear-log').addEventListener('click', () => {
     logs = [];
     counters = { events: 0, errors: 0 };
     $('logbox').innerHTML = '<div class="lg-empty">Listening for core events…</div>';
@@ -265,11 +281,56 @@ async function copyText(text, toastText) {
 
 let toastTimer;
 function showToast(text) {
-  const el = $('copy-toast');
+  const el = $('toast');
   el.textContent = text;
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 1400);
+}
+
+/* ------------------------------------------------------------- sheets */
+function openSheet(id) {
+  $(id).classList.add('open');
+}
+function closeSheet(id) {
+  $(id).classList.remove('open');
+}
+
+function buildSheet(containerId, options, current, onPick) {
+  const box = $(containerId);
+  box.innerHTML = '';
+  options.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.className = 'opt' + (opt.val === current ? ' sel' : '');
+    btn.type = 'button';
+    btn.innerHTML = `<span><span class="opt-label">${opt.label}</span><span class="opt-desc">${opt.desc}</span></span>
+      <span class="opt-check"><svg class="ic" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg></span>`;
+    btn.addEventListener('click', () => { onPick(opt.val); closeSheet('mode-sheet'); closeSheet('scan-sheet'); });
+    box.appendChild(btn);
+  });
+}
+
+function setupSheets() {
+  $('mode-row-btn').addEventListener('click', () => {
+    buildSheet('mode-sheet-options', MODE_OPTIONS, settings.protocol, (val) => {
+      settings.protocol = val;
+      renderSettings(); persist();
+    });
+    openSheet('mode-sheet');
+  });
+  $('scan-row-btn').addEventListener('click', () => {
+    const label = settings.ip_family === 'v6' ? 'IPv6' : settings.ip_family === 'both' ? 'Dual-stack' : 'IPv4';
+    const opts = SCAN_OPTIONS.map((o) => ({ ...o, label: `${label} · ${o.label}` }));
+    buildSheet('scan-sheet-options', opts, `${label} · ${SCAN_LABEL[settings.scan] || settings.scan}`, () => {
+      // The sheet only re-words the scan; the IP family lives in Settings.
+      renderSettings();
+    });
+    openSheet('scan-sheet');
+  });
+  $('close-mode-sheet').addEventListener('click', () => closeSheet('mode-sheet'));
+  $('close-scan-sheet').addEventListener('click', () => closeSheet('scan-sheet'));
+  $('mode-sheet').addEventListener('click', (e) => { if (e.target.id === 'mode-sheet') closeSheet('mode-sheet'); });
+  $('scan-sheet').addEventListener('click', (e) => { if (e.target.id === 'scan-sheet') closeSheet('scan-sheet'); });
 }
 
 /* ------------------------------------------------------------- settings */
@@ -282,31 +343,50 @@ function setMode(next) {
 }
 
 function renderSettings() {
-  document.querySelectorAll('#protocolMenu .opt').forEach((o) => o.classList.toggle('sel', o.dataset.val === settings.protocol));
+  document.querySelectorAll('#protocol-menu .opt').forEach((o) => o.classList.toggle('sel', o.dataset.val === settings.protocol));
   document.querySelectorAll('.seg-btn[data-group]').forEach((b) => {
-    const group = b.dataset.group === 'obfuscation' ? 'obfuscation' : 'scan';
+    const group = b.dataset.group;
     b.classList.toggle('active', b.dataset.val === settings[group]);
   });
-  $('scanHint').textContent = settings.scan;
-  $('obfHint').textContent = settings.obfuscation;
-  $('serverInput').value = settings.server || '';
+  $('server-input').value = settings.server || '';
+  $('inner-server-input').value = settings.inner_server || '';
+  $('dns-input').value = settings.dns || '';
+  $('route-direct-input').value = settings.route_direct || '';
+  $('route-block-input').value = settings.route_block || '';
+  $('team-input').value = settings.team || '';
+  $('access-token-input').value = settings.access_token || '';
+
+  $('current-mode-label').textContent = PROTOCOL_LABEL[settings.protocol] || 'MASQUE';
+  $('mode-row-value').textContent = PROTOCOL_LABEL[settings.protocol] || 'MASQUE';
+  const label = settings.ip_family === 'v6' ? 'IPv6' : settings.ip_family === 'both' ? 'Dual' : 'IPv4';
+  $('scan-row-value').textContent = `${label} · ${SCAN_LABEL[settings.scan] || settings.scan}`;
 }
 
 let saveTimer;
 async function persist() {
   try {
     await invoke('save_settings', { settings });
-    $('savedFlash').classList.remove('hidden');
+    $('saved-flash').classList.remove('hidden');
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => $('savedFlash').classList.add('hidden'), 1200);
+    saveTimer = setTimeout(() => $('saved-flash').classList.add('hidden'), 1200);
   } catch (_) {}
+}
+
+function readSettingsForm() {
+  settings.server = $('server-input').value.trim();
+  settings.inner_server = $('inner-server-input').value.trim();
+  settings.dns = $('dns-input').value.trim();
+  settings.route_direct = $('route-direct-input').value.trim();
+  settings.route_block = $('route-block-input').value.trim();
+  settings.team = $('team-input').value.trim();
+  settings.access_token = $('access-token-input').value.trim();
 }
 
 function setupSettings() {
   document.querySelectorAll('#mode-group .seg-btn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
   document.querySelectorAll('#mode-group-settings .seg-btn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
-  document.querySelectorAll('#protocolMenu .opt').forEach((o) =>
+  document.querySelectorAll('#protocol-menu .opt').forEach((o) =>
     o.addEventListener('click', () => {
       settings.protocol = o.dataset.val;
       renderSettings(); renderStatus(); persist();
@@ -315,27 +395,54 @@ function setupSettings() {
 
   document.querySelectorAll('.seg-btn[data-group]').forEach((b) =>
     b.addEventListener('click', () => {
-      const group = b.dataset.group === 'obfuscation' ? 'obfuscation' : 'scan';
+      const group = b.dataset.group;
       settings[group] = b.dataset.val;
       renderSettings(); persist();
     })
   );
 
-  const server = $('serverInput');
-  server.addEventListener('change', () => {
-    settings.server = server.value.trim();
-    persist();
+  ['server-input', 'inner-server-input', 'dns-input', 'route-direct-input', 'route-block-input', 'team-input', 'access-token-input'].forEach((id) => {
+    $(id).addEventListener('change', () => { readSettingsForm(); persist(); });
   });
 
-  $('restoreBtn').addEventListener('click', () => {
-    settings = { protocol: 'masque', scan: 'balanced', obfuscation: 'firewall', server: '' };
+  // Settings sections.
+  document.querySelectorAll('#settings-tab-group .seg-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#settings-tab-group .seg-btn').forEach((x) => x.classList.toggle('active', x === b));
+      $('settings-basic').style.display = b.dataset.tab === 'basic' ? 'flex' : 'none';
+      $('settings-advanced').style.display = b.dataset.tab === 'advanced' ? 'flex' : 'none';
+    })
+  );
+
+  // Zero Trust enrolment. The core stores the token itself, so the UI only
+  // hands over what it typed and reports the outcome.
+  $('team-signin-btn').addEventListener('click', async () => {
+    readSettingsForm();
+    const team = settings.team.trim();
+    if (!team) { showToast('Enter an organization slug'); return; }
+    if (!settings.access_token.trim()) { showToast('Enter an access token'); return; }
+    try {
+      await invoke('team_sign_in', {
+        team,
+        accessToken: settings.access_token.trim(),
+        accessId: settings.access_id.trim() || null,
+        accessSecret: settings.access_secret.trim() || null,
+      });
+      showToast('Enrolled in ' + team);
+    } catch (e) {
+      showToast(String(e));
+    }
+  });
+
+  $('restore-btn').addEventListener('click', () => {
+    settings = { protocol: 'masque', scan: 'balanced', obfuscation: 'firewall', server: '', inner_server: '', ip_family: 'v4', dns: '', route_block: '', route_direct: '', team: '', access_email: '', access_token: '', access_id: '', access_secret: '' };
     renderSettings(); renderStatus(); persist();
   });
 }
 
 /* ----------------------------------------------------------------- boot */
 async function boot() {
-  setupDock(); setupDetails(); setupConsole(); setupSettings();
+  setupDock(); setupDetails(); setupConsole(); setupSettings(); setupSheets();
 
   try {
     const loaded = await invoke('get_settings');
@@ -351,14 +458,7 @@ async function boot() {
   renderStatus(); renderUptime();
 
   await listen('aether-status', (payload) => {
-    const was = status.phase;
     status = payload;
-    if (payload.phase === 'connected') {
-      if (was !== 'connected') uptimeSecs = 0;
-      $('ripple-wave').classList.remove('go');
-      void $('ripple-wave').offsetWidth;
-      $('ripple-wave').classList.add('go');
-    }
     renderStatus();
   });
 
@@ -377,7 +477,7 @@ async function boot() {
 }
 
 if (!tauri || !tauri.core) {
-  document.body.innerHTML = '<main style="padding:24px;font-family:monospace;color:#ef4444">' +
+  document.body.innerHTML = '<main style="padding:24px;font-family:monospace;color:#ba1a1a">' +
     'Aether needs the native bridge (run the Android app, not a plain browser).</main>';
 } else {
   boot();

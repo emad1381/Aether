@@ -54,6 +54,56 @@ fn disconnect(state: State<'_, Arc<Engine>>, app: tauri::AppHandle) {
     state.disconnect(app);
 }
 
+/// Sign in to a Zero Trust organization with a token the UI already holds.
+#[tauri::command]
+async fn team_sign_in(
+    team: String,
+    access_token: Option<String>,
+    access_id: Option<String>,
+    access_secret: Option<String>,
+) -> Result<Option<String>, String> {
+    let mut credentials = aether::api::TeamCredentials::new(&team)
+        .map_err(|e| format!("{e}"))?;
+    credentials.token = access_token.filter(|t| !t.trim().is_empty());
+    credentials.client_id = access_id.filter(|t| !t.trim().is_empty());
+    credentials.client_secret = access_secret.filter(|t| !t.trim().is_empty());
+    if credentials.token.is_none() && credentials.client_id.is_none() {
+        return Err("an access token or a service key is required".into());
+    }
+    aether::api::team_sign_in(&credentials)
+        .await
+        .map(Some)
+        .map_err(|e| format!("{e}"))
+}
+
+/// Ask the organization to email a one-time code. Returns a session handle the
+/// UI submits that code against.
+#[tauri::command]
+async fn team_code_request(team: String, email: String) -> Result<u64, String> {
+    let credentials = aether::api::TeamCredentials::new(&team).map_err(|e| format!("{e}"))?;
+    let session = aether::api::team_email_code_request(&credentials, &email)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(engine::keep_sign_in_session(session))
+}
+
+/// Submit the code the organization emailed. Returns a token when it accepted.
+#[tauri::command]
+async fn team_code_submit(session: u64, code: String) -> Result<Option<String>, String> {
+    let session = engine::take_sign_in_session(session)?;
+    let token = aether::api::team_email_code_submit(&session, &code)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(token)
+}
+
+/// Forget the stored Zero Trust token and drop back to personal WARP.
+#[tauri::command]
+async fn team_sign_out() -> Result<(), String> {
+    aether::api::team_forget_token().await;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let engine = Engine::new();
@@ -80,6 +130,10 @@ pub fn run() {
             save_settings,
             connect,
             disconnect,
+            team_sign_in,
+            team_code_request,
+            team_code_submit,
+            team_sign_out,
             vpn_state,
             vpn_start,
             vpn_stop

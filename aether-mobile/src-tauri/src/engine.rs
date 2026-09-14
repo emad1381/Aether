@@ -45,6 +45,35 @@ pub fn save_settings(s: &Settings) {
     }
 }
 
+/// A Zero Trust email sign-in in flight, held for the UI to submit its code.
+type SignInSession = aether::zerotrust::EmailSignIn;
+
+fn sign_in_sessions(
+) -> &'static std::sync::Mutex<std::collections::HashMap<u64, SignInSession>> {
+    static SESSIONS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<u64, SignInSession>>,
+    > = std::sync::OnceLock::new();
+    SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Keep a sign-in session the UI is about to ask a code for, and hand back the
+/// handle it submits against.
+pub fn keep_sign_in_session(session: SignInSession) -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    sign_in_sessions().lock().insert(id, session);
+    id
+}
+
+/// Take the session back so the code can be submitted against it. Each session
+/// is single use: the UI has to request a new code if this one is consumed.
+pub fn take_sign_in_session(id: u64) -> Result<SignInSession, String> {
+    sign_in_sessions()
+        .lock()
+        .remove(&id)
+        .ok_or_else(|| format!("there is no sign-in session {id}"))
+}
+
 /// The engine runs one tunnel session at a time, in-process, through the
 /// core's own public API. Each session owns a `Cancel`; `disconnect` signals it
 /// and the task tears the tunnel down. A session counter guards against an old
@@ -111,7 +140,16 @@ impl Engine {
         let app2 = app.clone();
         tauri::async_runtime::spawn(async move {
             let outcome = engine
-                .run_session(app2.clone(), transport, protocol_label, noize, scan_mode, peer, cancel)
+                .run_session(
+                    app2.clone(),
+                    transport,
+                    protocol_label,
+                    noize,
+                    scan_mode,
+                    peer,
+                    cancel,
+                    settings,
+                )
                 .await;
             // A superseded session keeps its hands off the status.
             if engine.session.load(Ordering::SeqCst) == my_session {
@@ -155,17 +193,35 @@ impl Engine {
         scan_mode: String,
         peer: Option<SocketAddr>,
         cancel: Cancel,
+        settings: Settings,
     ) -> Result<(), String> {
         // 1. Identity: reuse the stored device or register one on first use.
+        // A nested tunnel keeps two, so it opens the outer one and then a
+        // second one the tunnel itself dials through the first.
         let base = data_dir().join("aether.toml").to_string_lossy().into_owned();
-        let id_path = api::identity_path(&base, transport, None);
+        let (outer_path, inner_path) = match transport.needs_inner_identity() {
+            true => api::nested_identity_paths(&base, transport, None),
+            false => (api::identity_path(&base, transport, None), String::new()),
+        };
         let request = api::ProvisionRequest::for_transport(transport);
-        let identity = api::open_identity(&id_path, &request)
+        let identity = api::open_identity(&outer_path, &request)
             .await
             .map_err(|e| format!("Could not register a device: {e}"))?;
         if cancel.is_cancelled() {
             return Ok(());
         }
+
+        let inner_identity = if transport.needs_inner_identity() {
+            let inner = api::open_identity(&inner_path, &request)
+                .await
+                .map_err(|e| format!("Could not register the second device: {e}"))?;
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+            Some(inner)
+        } else {
+            None
+        };
 
         // 2. Endpoint: a hand-typed server is used as-is; otherwise sweep.
         let endpoint = match peer {
@@ -177,7 +233,7 @@ impl Engine {
                 });
                 let scan = ScanRequest::for_transport(transport)
                     .with_mode(&scan_mode)
-                    .with_ip(IpScan::V4)
+                    .with_ip(ip_scan_of(&settings))
                     .with_profile(&noize);
                 match api::scan(&identity, &scan, &cancel).await {
                     Ok(found) => found.socket(),
@@ -197,6 +253,16 @@ impl Engine {
             return Ok(());
         }
 
+        // A nested tunnel pins its second hop when the user wrote one down; the
+        // empty value means the core picks one on its own.
+        let inner_peer = inner_identity.as_ref().and_then(|_| {
+            settings
+                .inner_server
+                .split([',', ';', ' '])
+                .find(|part| !part.trim().is_empty())
+                .and_then(|part| part.trim().parse::<SocketAddr>().ok())
+        });
+
         self.set(&app, |st| {
             st.phase = Phase::Connecting;
             st.detail = format!("Opening the tunnel to {endpoint}…");
@@ -210,6 +276,9 @@ impl Engine {
             .with_profile(&noize);
         spec.keepalive = 15;
         spec.verify_timeout = Duration::from_secs(20);
+        if let Some(inner) = inner_peer {
+            spec = spec.with_inner_peer(inner);
+        }
 
         let opener = {
             let engine = self.clone();
@@ -229,7 +298,10 @@ impl Engine {
             })
         };
 
-        let outcome = api::connect(&identity, endpoint, &spec, &cancel).await;
+        let outcome = match inner_identity {
+            Some(inner) => api::connect_nested(&identity, &inner, endpoint, &spec, &cancel).await,
+            None => api::connect(&identity, endpoint, &spec, &cancel).await,
+        };
         opener.abort();
         monitor.abort();
 
@@ -244,6 +316,15 @@ impl Engine {
                 }
             }
         }
+    }
+}
+
+/// The core reads its IP-version choice from a setting the UI owns.
+fn ip_scan_of(settings: &Settings) -> IpScan {
+    match settings.ip_family.as_str() {
+        "v6" | "6" => IpScan::V6,
+        "both" | "dual" => IpScan::Both,
+        _ => IpScan::V4,
     }
 }
 
@@ -396,41 +477,73 @@ async fn fetch_trace() -> Result<TraceInfo, String> {
 
 fn plan(s: &Settings) -> (Transport, String, String, String) {
     let transport = match s.protocol.as_str() {
-        "wg" => Transport::WireGuard,
+        "wg" | "wireguard" => Transport::WireGuard,
+        "gool" | "wiw" | "warp-in-warp" => Transport::Gool,
+        "mim" | "m2" | "masque-in-masque" => Transport::Mim,
         _ => Transport::Masque,
     };
     let label = match s.protocol.as_str() {
-        "wg" => "WireGuard",
+        "wg" | "wireguard" => "WireGuard",
+        "gool" | "wiw" | "warp-in-warp" => "WARP-in-WARP",
+        "mim" | "m2" | "masque-in-masque" => "MASQUE-in-MASQUE",
         "masque-h2" => "MASQUE / HTTP/2",
         _ => "MASQUE / HTTP/3",
     };
 
-    // The core's MASQUE carrier is chosen from this environment switch.
+    // The core's MASQUE carrier is chosen from this environment switch. The
+    // h2 carrier only applies to masque and mim, the two masque protocols.
     match s.protocol.as_str() {
-        "masque-h2" => std::env::set_var("AETHER_MASQUE_HTTP2", "1"),
+        "masque-h2" | "mim-h2" => std::env::set_var("AETHER_MASQUE_HTTP2", "1"),
         _ => std::env::remove_var("AETHER_MASQUE_HTTP2"),
     }
-    std::env::set_var("AETHER_IP", "4");
-    std::env::remove_var("AETHER_TEAM");
+    match s.ip_family.as_str() {
+        "v6" | "6" => std::env::set_var("AETHER_IP", "v6"),
+        "both" | "dual" => std::env::set_var("AETHER_IP", "both"),
+        _ => std::env::set_var("AETHER_IP", "v4"),
+    }
+
+    // The routing rules are read by the core straight out of the environment,
+    // the same way the CLI reads them, so they apply before the tunnel comes
+    // up rather than after.
+    set_or_remove("AETHER_DNS", &s.dns);
+    set_or_remove("AETHER_ROUTE_BLOCK", &s.route_block);
+    set_or_remove("AETHER_ROUTE_DIRECT", &s.route_direct);
+    set_or_remove("AETHER_TEAM", &s.team);
+    set_or_remove("AETHER_ACCESS_EMAIL", &s.access_email);
+    set_or_remove("AETHER_ACCESS_TOKEN", &s.access_token);
+    set_or_remove("AETHER_ACCESS_CLIENT_ID", &s.access_id);
+    set_or_remove("AETHER_ACCESS_CLIENT_SECRET", &s.access_secret);
     std::env::remove_var("AETHER_UPSTREAM");
     std::env::remove_var("AETHER_MARK");
 
     let scan_mode = match s.scan.as_str() {
-        "fast" => "turbo",
-        "deep" => "thorough",
+        "turbo" | "fast" => "turbo",
+        "thorough" | "deep" => "thorough",
+        "stealth" => "stealth",
+        "ironclad" => "ironclad",
         _ => "balanced",
     };
-    let noize = match (s.obfuscation.as_str(), transport) {
-        ("off", _) => "off",
-        ("strong", Transport::WireGuard) => "aggressive",
-        ("strong", _) => "gfw",
+    let noize = match (s.obfuscation.as_str(), transport.carrier()) {
+        ("off" | "none", _) => "off",
+        ("light", _) => "light",
+        ("strong" | "aggressive", Transport::WireGuard) => "aggressive",
+        ("strong" | "aggressive", _) => "gfw",
         ("balanced", Transport::WireGuard) => "balanced",
         ("balanced", _) => "firewall",
+        ("gfw", _) => "gfw",
         _ => "firewall",
     };
     std::env::set_var("AETHER_NOIZE", noize);
 
     (transport, label.into(), noize.into(), scan_mode.into())
+}
+
+fn set_or_remove(key: &str, value: &str) {
+    if value.trim().is_empty() {
+        std::env::remove_var(key);
+    } else {
+        std::env::set_var(key, value.trim());
+    }
 }
 
 fn parse_peer(raw: &str) -> Option<SocketAddr> {
