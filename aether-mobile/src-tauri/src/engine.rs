@@ -48,12 +48,11 @@ pub fn save_settings(s: &Settings) {
 /// A Zero Trust email sign-in in flight, held for the UI to submit its code.
 type SignInSession = aether::zerotrust::EmailSignIn;
 
-fn sign_in_sessions(
-) -> &'static std::sync::Mutex<std::collections::HashMap<u64, SignInSession>> {
+fn sign_in_sessions() -> &'static parking_lot::Mutex<std::collections::HashMap<u64, SignInSession>> {
     static SESSIONS: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<u64, SignInSession>>,
+        parking_lot::Mutex<std::collections::HashMap<u64, SignInSession>>,
     > = std::sync::OnceLock::new();
-    SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+    SESSIONS.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
 }
 
 /// Keep a sign-in session the UI is about to ask a code for, and hand back the
