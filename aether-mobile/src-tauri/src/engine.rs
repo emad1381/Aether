@@ -526,9 +526,9 @@ fn plan(s: &Settings) -> (Transport, String, String, String) {
     let noize = match (s.obfuscation.as_str(), transport.carrier()) {
         ("off" | "none", _) => "off",
         ("light", _) => "light",
-        ("strong" | "aggressive", Transport::WireGuard) => "aggressive",
+        ("strong" | "aggressive", aether::api::Carrier::WireGuard) => "aggressive",
         ("strong" | "aggressive", _) => "gfw",
-        ("balanced", Transport::WireGuard) => "balanced",
+        ("balanced", aether::api::Carrier::WireGuard) => "balanced",
         ("balanced", _) => "firewall",
         ("gfw", _) => "gfw",
         _ => "firewall",

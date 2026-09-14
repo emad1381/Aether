@@ -19,6 +19,15 @@ pub enum Transport {
     Mim,
 }
 
+/// The protocol a tunnel rides on. A nested tunnel is carried by one of the
+/// two base transports, so the scan, the probe and the identity provisioning
+/// only ever have to consider these two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Carrier {
+    Masque,
+    WireGuard,
+}
+
 impl Transport {
     pub fn parse(raw: &str) -> Transport {
         match raw.trim().to_lowercase().as_str() {
@@ -43,11 +52,10 @@ impl Transport {
 
     /// The carrier a nested tunnel is built from: WireGuard for gool, MASQUE
     /// for everything else.
-    pub fn carrier(&self) -> Transport {
+    pub fn carrier(&self) -> Carrier {
         match self {
-            Transport::Gool => Transport::WireGuard,
-            Transport::Mim => Transport::Masque,
-            other => *other,
+            Transport::Gool | Transport::WireGuard => Carrier::WireGuard,
+            Transport::Mim | Transport::Masque => Carrier::Masque,
         }
     }
 
@@ -242,7 +250,7 @@ impl ProvisionRequest {
     /// carrier does, because both of its hops ride on that one protocol.
     pub fn for_transport(transport: Transport) -> Self {
         Self {
-            masque_cert: matches!(transport.carrier(), Transport::Masque),
+            masque_cert: transport.carrier() == Carrier::Masque,
             ..Default::default()
         }
     }
@@ -286,11 +294,10 @@ pub fn identity_path(base: &str, transport: Transport, team: Option<&str>) -> St
     match team {
         Some(team) => crate::derive_sibling_path(base, &format!("team-{team}")),
         None => match transport.carrier() {
-            Transport::Masque => crate::derive_sibling_path(base, "masque"),
-            Transport::WireGuard => base.to_string(),
-            // A nested tunnel is carried by one of the two above, so the
-            // outer identity lands where its carrier already expects it.
-            Transport::Gool | Transport::Mim => base.to_string(),
+            // A nested tunnel is carried by one of the two base protocols, so
+            // the outer identity lands where its carrier already expects it.
+            Carrier::Masque => crate::derive_sibling_path(base, "masque"),
+            Carrier::WireGuard => base.to_string(),
         },
     }
 }
@@ -438,7 +445,7 @@ pub async fn scan(identity: &Identity, request: &ScanRequest, cancel: &Cancel) -
     // A nested tunnel scans for its carrier's edge: gool hunts WireGuard
     // endpoints, mim hunts MASQUE ones. The inner hop is picked afterwards.
     match request.transport.carrier() {
-        Transport::Masque => {
+        Carrier::Masque => {
             let probe = prober::MasqueProbe {
                 sni: consts::CONNECT_SNI.to_string(),
                 authority: quic::default_authority().to_string(),
@@ -459,7 +466,7 @@ pub async fn scan(identity: &Identity, request: &ScanRequest, cancel: &Cancel) -
                 rtt_ms: best.rtt.as_millis() as u64,
             })
         }
-        Transport::WireGuard => {
+        Carrier::WireGuard => {
             let probe = wg_prober::WgProbe {
                 private_key: Arc::new(identity.private_key_bytes()?),
                 peer_public_key: Arc::new(identity.peer_public_key_bytes()?),
@@ -560,11 +567,11 @@ pub async fn verify_endpoint(
     // one the outer hop opens; the inner hop proves itself when the tunnel
     // comes up.
     match spec.transport.carrier() {
-        Transport::Masque => {
+        Carrier::Masque => {
             let attempt = async { Ok(crate::quick_verify_masque_peer(identity, peer).await) };
             guard(cancel, attempt).await
         }
-        Transport::WireGuard => {
+        Carrier::WireGuard => {
             let private_key = identity.private_key_bytes()?;
             let peer_public = identity.peer_public_key_bytes()?;
             let local_ipv4 = wg_local_v4(identity)?;
@@ -713,10 +720,10 @@ mod tests {
 
     #[test]
     fn a_nested_tunnel_rides_on_one_carrier() {
-        assert_eq!(Transport::Gool.carrier(), Transport::WireGuard);
-        assert_eq!(Transport::Mim.carrier(), Transport::Masque);
-        assert_eq!(Transport::Masque.carrier(), Transport::Masque);
-        assert_eq!(Transport::WireGuard.carrier(), Transport::WireGuard);
+        assert_eq!(Transport::Gool.carrier(), Carrier::WireGuard);
+        assert_eq!(Transport::Mim.carrier(), Carrier::Masque);
+        assert_eq!(Transport::Masque.carrier(), Carrier::Masque);
+        assert_eq!(Transport::WireGuard.carrier(), Carrier::WireGuard);
     }
 
     #[test]
