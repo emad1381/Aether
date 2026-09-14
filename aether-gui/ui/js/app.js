@@ -173,6 +173,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     mainDialBtn.classList.add('animate-error-shake');
   }
 
+  // Auto Mode narrates its progress through status.protocol ("AUTO: Testing
+  // MASQUE / HTTP/2 / firewall / v4", "AUTO: Switching to final port..."), so
+  // the status line names the route the supervisor is actually working on.
+  function engineLabel(payload) {
+    return payload && typeof payload.protocol === 'string' ? payload.protocol.trim() : '';
+  }
+
   function updateVisualState(visualState, payload = {}) {
     currentState = visualState;
     if (!mainDialBtn || !ringGlow) return;
@@ -195,7 +202,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         statusPrimary.innerHTML = `Connected to ${loc} · <span class="text-secondary font-mono font-medium">${pingText}</span>`;
       }
       if (statusSecondary) {
-        statusSecondary.textContent = getProtocolDisplayName(config.protocol);
+        statusSecondary.textContent = engineLabel(payload) || getProtocolDisplayName(config.protocol);
       }
       if (railStatusDot) {
         railStatusDot.className = 'w-2 h-2 rounded-full bg-secondary';
@@ -212,7 +219,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         statusPrimary.innerHTML = 'Negotiating cryptographic handshake…';
       }
       if (statusSecondary) {
-        statusSecondary.textContent = 'RTT PROBE · RESOLVING ANYCAST';
+        statusSecondary.textContent = engineLabel(payload) || 'RTT PROBE · RESOLVING ANYCAST';
       }
       if (railStatusDot) {
         railStatusDot.className = 'w-2 h-2 rounded-full bg-[#f2711c] animate-ping';

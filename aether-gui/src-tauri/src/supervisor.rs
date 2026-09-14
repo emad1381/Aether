@@ -79,6 +79,7 @@ impl Supervisor {
             let mut st = self.status.lock();
             st.state = State::Connecting;
             st.latency_ms = None;
+            st.protocol = None;
             st.error_message = None;
             st.socks_endpoint = format!("127.0.0.1:{}", cfg.socks_port);
             st.system_proxy_active = false;
@@ -549,12 +550,12 @@ async fn run_candidate(
     cfg.protocol = candidate.protocol.clone();
     cfg.noize = candidate.noize.clone();
     cfg.ip_family = candidate.ip_family.clone();
-    for retry in 0..3_u16 {
-        let Some((socks_port, http_port)) = find_free_port_pair(
-            socks_port_start + retry,
-            http_port_start + retry,
-        ) else {
-            continue;
+    let mut lane_offset = 0_u16;
+    for _attempt in 0..MAX_PORT_ATTEMPTS {
+        let Some((socks_port, http_port)) =
+            find_free_port_pair(socks_port_start, http_port_start, lane_offset)
+        else {
+            break;
         };
         cfg.socks_port = socks_port;
         cfg.http_port = Some(http_port);
@@ -572,7 +573,17 @@ async fn run_candidate(
             &mut stop_rx,
         ).await {
             CandidateRunResult::PortConflict => {
-                emit_auto_log(&app, "WARN", format!("[AUTO #{id}] port conflict; retrying with the next free local port."));
+                emit_auto_log(
+                    &app,
+                    "WARN",
+                    format!(
+                        "[AUTO #{id}] local ports {socks_port}/{http_port} conflicted; retrying at the next free pair in this lane."
+                    ),
+                );
+                // The scan returns the first free pair, so without stepping
+                // past the pair that just failed the retry would probe the
+                // same two ports again and waste the remaining attempts.
+                lane_offset = socks_port.saturating_sub(socks_port_start) + 1;
             }
             CandidateRunResult::Complete => return,
         }
@@ -599,10 +610,17 @@ fn is_bind_conflict(line: &str) -> bool {
         || (lower.contains("bind") && lower.contains("address"))
 }
 
-fn find_free_port_pair(socks_start: u16, http_start: u16) -> Option<(u16, u16)> {
-    for offset in 0..99_u16 {
-        let socks = socks_start.checked_add(offset)?;
-        let http = http_start.checked_add(offset)?;
+/// Ports each concurrent worker owns exclusively, so two temporary engines
+/// can never negotiate the same local pair and a retry stays in its own lane.
+const LANE_WIDTH: u16 = 100;
+
+/// Local port pairs one candidate may try before it is reported unusable.
+const MAX_PORT_ATTEMPTS: u16 = 3;
+
+fn find_free_port_pair(socks_base: u16, http_base: u16, start_offset: u16) -> Option<(u16, u16)> {
+    for offset in start_offset..LANE_WIDTH {
+        let Some(socks) = socks_base.checked_add(offset) else { break };
+        let Some(http) = http_base.checked_add(offset) else { break };
         let socks_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, socks));
         let http_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, http));
         if let (Ok(socks_listener), Ok(http_listener)) = (socks_listener, http_listener) {
@@ -737,7 +755,7 @@ async fn run_candidate_once(
             }
         }
 
-        if port_conflict {
+        if port_conflict && !reported_success {
             let _ = child.kill().await;
             let _ = child.wait().await;
             return CandidateRunResult::PortConflict;
