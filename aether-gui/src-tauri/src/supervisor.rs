@@ -34,6 +34,7 @@ impl Supervisor {
                 uptime_secs: 0,
                 socks_endpoint: "127.0.0.1:1819".to_string(),
                 system_proxy_active: false,
+                protocol: None,
                 exit_ip: None,
                 colo: None,
                 error_message: None,
@@ -110,7 +111,7 @@ impl Supervisor {
                 {
                     let mut st = self.status.lock();
                     st.state = State::Connecting;
-                    st.protocol = format!("AUTO: Testing {}...", label);
+                    st.protocol = Some(format!("AUTO: Testing {}...", label));
                     let _ = app.emit("aether-status", st.clone());
                 }
 
@@ -316,7 +317,7 @@ impl Supervisor {
         let mut st = self.status.lock();
         st.state = State::Connected;
         if let Some(proto) = custom_proto {
-            st.protocol = proto.to_string();
+            st.protocol = Some(proto.to_string());
         }
         *self.start_time.lock() = Some(Instant::now());
 
