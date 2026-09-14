@@ -402,6 +402,11 @@ main {
   transition: background 0.2s ease, color 0.2s ease;
   white-space: nowrap;
 }
+/* A wrapped line with one leftover button must not stretch it across the
+   whole row: only the single-line controls keep flex-grow. */
+.seg.wrap .seg-btn {
+  flex: 0 1 auto;
+}
 .seg-btn.active {
   background: var(--primary-container);
   color: var(--on-primary);
@@ -878,6 +883,13 @@ textarea.text-input {
   font-weight: 600;
   text-transform: uppercase;
   color: var(--on-surface-variant);
+}
+/* A labelled group: the label sits close to its control, and the group keeps
+   the shared vertical rhythm from the view's own gap. */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 0.75rem);
 }
 .settings-actions {
   display: flex;

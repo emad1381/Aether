@@ -157,20 +157,19 @@
     </div>
 
     <div id="settings-basic" style="display:flex;flex-direction:column;gap:20px">
-      <div>
+      <div class="section">
         <span class="section-label">Tunnel mode</span>
-      </div>
-      <div class="card-flat">
-        <div class="seg" id="mode-group-settings" role="group" aria-label="Routing mode">
-          <button class="seg-btn active" data-mode="proxy" type="button">Proxy</button>
-          <button class="seg-btn" data-mode="vpn" type="button">VPN</button>
+        <div class="card-flat">
+          <div class="seg" id="mode-group-settings" role="group" aria-label="Routing mode">
+            <button class="seg-btn active" data-mode="proxy" type="button">Proxy</button>
+            <button class="seg-btn" data-mode="vpn" type="button">VPN</button>
+          </div>
+          <p class="hint">VPN mode routes every app through the tunnel. Proxy mode only serves apps you point at the SOCKS5 port.</p>
         </div>
-        <p class="hint">VPN mode routes every app through the tunnel. Proxy mode only serves apps you point at the SOCKS5 port.</p>
       </div>
 
-      <div>
+      <div class="section">
         <span class="section-label">Protocol</span>
-      </div>
       <div class="menu" id="protocol-menu">
         <button class="opt" data-val="masque" type="button">
           <span><span class="opt-label">MASQUE / HTTP/3</span><span class="opt-desc">QUIC carrier · default</span></span>
@@ -193,105 +192,106 @@
           <span class="opt-check"><svg class="ic" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg></span>
         </button>
       </div>
+      </div>
 
-      <div>
+      <div class="section">
         <span class="section-label">IP version</span>
-      </div>
-      <div class="seg" id="ip-group" role="group" aria-label="IP version">
-        <button class="seg-btn active" data-group="ip_family" data-val="v4" type="button">IPv4</button>
-        <button class="seg-btn" data-group="ip_family" data-val="v6" type="button">IPv6</button>
-        <button class="seg-btn" data-group="ip_family" data-val="both" type="button">Both</button>
+        <div class="seg" id="ip-group" role="group" aria-label="IP version">
+          <button class="seg-btn active" data-group="ip_family" data-val="v4" type="button">IPv4</button>
+          <button class="seg-btn" data-group="ip_family" data-val="v6" type="button">IPv6</button>
+          <button class="seg-btn" data-group="ip_family" data-val="both" type="button">Both</button>
+        </div>
       </div>
 
-      <div>
+      <div class="section">
         <span class="section-label">Scan mode</span>
-      </div>
-      <div class="seg wrap" id="scan-group" role="group" aria-label="Scan mode">
-        <button class="seg-btn" data-group="scan" data-val="turbo" type="button">Turbo</button>
-        <button class="seg-btn active" data-group="scan" data-val="balanced" type="button">Balanced</button>
-        <button class="seg-btn" data-group="scan" data-val="thorough" type="button">Thorough</button>
-        <button class="seg-btn" data-group="scan" data-val="stealth" type="button">Stealth</button>
-        <button class="seg-btn" data-group="scan" data-val="ironclad" type="button">Ironclad</button>
+        <div class="seg wrap" id="scan-group" role="group" aria-label="Scan mode">
+          <button class="seg-btn" data-group="scan" data-val="turbo" type="button">Turbo</button>
+          <button class="seg-btn active" data-group="scan" data-val="balanced" type="button">Balanced</button>
+          <button class="seg-btn" data-group="scan" data-val="thorough" type="button">Thorough</button>
+          <button class="seg-btn" data-group="scan" data-val="stealth" type="button">Stealth</button>
+          <button class="seg-btn" data-group="scan" data-val="ironclad" type="button">Ironclad</button>
+        </div>
       </div>
 
-      <div>
+      <div class="section">
         <span class="section-label">Obfuscation</span>
-      </div>
-      <div class="seg wrap" id="obf-group" role="group" aria-label="Obfuscation profile">
-        <button class="seg-btn" data-group="obfuscation" data-val="off" type="button">Off</button>
-        <button class="seg-btn" data-group="obfuscation" data-val="light" type="button">Light</button>
-        <button class="seg-btn active" data-group="obfuscation" data-val="firewall" type="button">Firewall</button>
-        <button class="seg-btn" data-group="obfuscation" data-val="balanced" type="button">Balanced</button>
-        <button class="seg-btn" data-group="obfuscation" data-val="gfw" type="button">GFW</button>
-        <button class="seg-btn" data-group="obfuscation" data-val="aggressive" type="button">Aggressive</button>
+        <div class="seg wrap" id="obf-group" role="group" aria-label="Obfuscation profile">
+          <button class="seg-btn" data-group="obfuscation" data-val="off" type="button">Off</button>
+          <button class="seg-btn" data-group="obfuscation" data-val="light" type="button">Light</button>
+          <button class="seg-btn active" data-group="obfuscation" data-val="firewall" type="button">Firewall</button>
+          <button class="seg-btn" data-group="obfuscation" data-val="balanced" type="button">Balanced</button>
+          <button class="seg-btn" data-group="obfuscation" data-val="gfw" type="button">GFW</button>
+          <button class="seg-btn" data-group="obfuscation" data-val="aggressive" type="button">Aggressive</button>
+        </div>
       </div>
 
-      <div>
+      <div class="section">
         <span class="section-label">Pinned edge (optional)</span>
-      </div>
-      <div class="card-flat">
-        <input class="text-input" id="server-input" placeholder="162.159.192.1:2408 — blank scans instead" spellcheck="false" type="text"/>
-        <p class="hint">Empty means the core scans and picks the fastest verified edge. Nested protocols accept a second hop below.</p>
-        <input class="text-input" id="inner-server-input" placeholder="inner hop: 188.114.96.1:2408 (gool / mim)" spellcheck="false" type="text"/>
+        <div class="card-flat">
+          <input class="text-input" id="server-input" placeholder="162.159.192.1:2408 — blank scans instead" spellcheck="false" type="text"/>
+          <p class="hint">Empty means the core scans and picks the fastest verified edge. Nested protocols accept a second hop below.</p>
+          <input class="text-input" id="inner-server-input" placeholder="inner hop: 188.114.96.1:2408 (gool / mim)" spellcheck="false" type="text"/>
+        </div>
       </div>
     </div>
 
     <div id="settings-advanced" style="display:none;flex-direction:column;gap:20px">
-      <div>
+      <div class="section">
         <span class="section-label">Local bind &amp; resolution</span>
-      </div>
-      <div class="card-flat">
-        <div>
-          <label class="label-md dim" style="display:block;margin-bottom:6px">SOCKS5 inbound address</label>
-          <input class="text-input" id="socks-input" readonly value="127.0.0.1:1819" type="text"/>
-        </div>
-        <div>
-          <label class="label-md dim" style="display:block;margin-bottom:6px">Upstream DNS resolvers</label>
-          <input class="text-input" id="dns-input" placeholder="1.1.1.1, 1.0.0.1" spellcheck="false" type="text"/>
-        </div>
-      </div>
-
-      <div>
-        <span class="section-label">Split routing</span>
-      </div>
-      <div class="card-flat">
-        <div>
-          <label class="label-md dim" style="display:block;margin-bottom:6px">Never route through the tunnel</label>
-          <textarea class="text-input" id="route-direct-input" placeholder="192.168.1.0/24&#10;*.local&#10;internal.corp" spellcheck="false"></textarea>
-        </div>
-        <div>
-          <label class="label-md dim" style="display:block;margin-bottom:6px">Always route through the tunnel</label>
-          <textarea class="text-input" id="route-block-input" placeholder="example.com&#10;10.0.0.0/8" spellcheck="false"></textarea>
-        </div>
-        <p class="hint">Entries may be a domain, a keyword, a regexp, a CIDR, or a port. Block is checked first, then direct, then the tunnel.</p>
-      </div>
-
-      <div>
-        <span class="section-label">Zero Trust</span>
-      </div>
-      <div class="card-flat">
-        <div>
-          <label class="label-md dim" style="display:block;margin-bottom:6px">Organization slug</label>
-          <input class="text-input" id="team-input" placeholder="acme-workspace" spellcheck="false" type="text"/>
-        </div>
-        <div>
-          <label class="label-md dim" style="display:block;margin-bottom:6px">Access token</label>
-          <input class="text-input" id="access-token-input" placeholder="a JWT from the team's /warp page" spellcheck="false" type="text"/>
-        </div>
-        <p class="hint">Leave blank for personal WARP. A token enrolls the device into the organization.</p>
-        <button class="btn btn-primary" id="team-signin-btn" type="button">Enroll device</button>
-      </div>
-
-      <div>
-        <span class="section-label">Tor</span>
-      </div>
-      <div class="card-flat">
-        <div class="row">
+        <div class="card-flat">
           <div>
-            <span class="opt-label">Onion routing</span>
-            <p class="hint" style="margin:2px 0 0">The installed build has no Tor support. Use a release built with the <b>tor</b> feature.</p>
+            <label class="label-md dim" style="display:block;margin-bottom:6px">SOCKS5 inbound address</label>
+            <input class="text-input" id="socks-input" readonly value="127.0.0.1:1819" type="text"/>
           </div>
-          <button class="locked toggle" disabled type="button" aria-label="Tor unavailable"></button>
+          <div>
+            <label class="label-md dim" style="display:block;margin-bottom:6px">Upstream DNS resolvers</label>
+            <input class="text-input" id="dns-input" placeholder="1.1.1.1, 1.0.0.1" spellcheck="false" type="text"/>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <span class="section-label">Split routing</span>
+        <div class="card-flat">
+          <div>
+            <label class="label-md dim" style="display:block;margin-bottom:6px">Never route through the tunnel</label>
+            <textarea class="text-input" id="route-direct-input" placeholder="192.168.1.0/24&#10;*.local&#10;internal.corp" spellcheck="false"></textarea>
+          </div>
+          <div>
+            <label class="label-md dim" style="display:block;margin-bottom:6px">Always route through the tunnel</label>
+            <textarea class="text-input" id="route-block-input" placeholder="example.com&#10;10.0.0.0/8" spellcheck="false"></textarea>
+          </div>
+          <p class="hint">Entries may be a domain, a keyword, a regexp, a CIDR, or a port. Block is checked first, then direct, then the tunnel.</p>
+        </div>
+      </div>
+
+      <div class="section">
+        <span class="section-label">Zero Trust</span>
+        <div class="card-flat">
+          <div>
+            <label class="label-md dim" style="display:block;margin-bottom:6px">Organization slug</label>
+            <input class="text-input" id="team-input" placeholder="acme-workspace" spellcheck="false" type="text"/>
+          </div>
+          <div>
+            <label class="label-md dim" style="display:block;margin-bottom:6px">Access token</label>
+            <input class="text-input" id="access-token-input" placeholder="a JWT from the team's /warp page" spellcheck="false" type="text"/>
+          </div>
+          <p class="hint">Leave blank for personal WARP. A token enrolls the device into the organization.</p>
+          <button class="btn btn-primary" id="team-signin-btn" type="button">Enroll device</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <span class="section-label">Tor</span>
+        <div class="card-flat">
+          <div class="row">
+            <div>
+              <span class="opt-label">Onion routing</span>
+              <p class="hint" style="margin:2px 0 0">The installed build has no Tor support. Use a release built with the <b>tor</b> feature.</p>
+            </div>
+            <button class="locked toggle" disabled type="button" aria-label="Tor unavailable"></button>
+          </div>
         </div>
       </div>
     </div>
