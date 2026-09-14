@@ -603,6 +603,14 @@ fn is_data_plane_confirmation(line: &str) -> bool {
     line.contains("tunnel validated (end-to-end data confirmed)")
 }
 
+/// The engine binds its SOCKS listener only once a route is genuinely usable.
+/// The MASQUE family prints "...; exposing socks5" for the outer hop of
+/// MASQUE-in-MASQUE before any inner hop answers, so that line alone must
+/// never be read as a connection.
+fn is_socks_listener_ready(line: &str) -> bool {
+    line.contains("socks5 server listening") || line.contains("socks5 listening on")
+}
+
 fn is_bind_conflict(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower.contains("address already in use")
@@ -741,7 +749,7 @@ async fn run_candidate_once(
                 match line { Ok(Some(line)) => {
                     port_conflict |= is_bind_conflict(&line);
                     saw_data_plane |= is_data_plane_confirmation(&line);
-                    socks_bound |= line.contains("socks5 server listening");
+                    socks_bound |= is_socks_listener_ready(&line);
                     emit_auto_log(app, log_level(&line), format!("[AUTO #{id}] {line}"));
                 }, Ok(None) => stderr = None, Err(error) => { emit_auto_log(app, "WARN", format!("[AUTO #{id}] stderr read error: {error}")); stderr = None; } }
             }
@@ -749,7 +757,7 @@ async fn run_candidate_once(
                 match line { Ok(Some(line)) => {
                     port_conflict |= is_bind_conflict(&line);
                     saw_data_plane |= is_data_plane_confirmation(&line);
-                    socks_bound |= line.contains("socks5 server listening");
+                    socks_bound |= is_socks_listener_ready(&line);
                     emit_auto_log(app, log_level(&line), format!("[AUTO #{id}] {line}"));
                 }, Ok(None) => stdout = None, Err(error) => { emit_auto_log(app, "WARN", format!("[AUTO #{id}] stdout read error: {error}")); stdout = None; } }
             }
@@ -824,10 +832,7 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto
     let _ = app.emit("aether-log", entry);
 
     // State machine extraction
-    if line.contains("socks5 server listening")
-        || line.contains("exposing socks5")
-        || line.contains("wireguard tunnel validated (end-to-end data confirmed)")
-    {
+    if is_socks_listener_ready(line) {
         if let Some(state) = app.try_state::<Arc<Supervisor>>() {
             state.set_connected(app, cfg, custom_proto);
         }

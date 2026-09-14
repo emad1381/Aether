@@ -180,7 +180,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     return payload && typeof payload.protocol === 'string' ? payload.protocol.trim() : '';
   }
 
+  // The exit IP used to wait for the next 25s poll. Fetch it as soon as the
+  // tunnel reports Connected, and retry briefly in case the first probe raced
+  // the SOCKS listener coming up.
+  let traceInFlight = false;
+
+  async function refreshTrace() {
+    if (traceInFlight) return;
+    traceInFlight = true;
+    try {
+      const trace = await api.fetchTraceInfo(config.socks_port);
+      if (trace && trace.ip) {
+        currentStatus.exit_ip = trace.ip;
+        currentStatus.colo = trace.colo;
+        currentStatus.loc = trace.loc;
+        updateVisualState('connected', currentStatus);
+      }
+    } catch (_) {
+      // The tunnel may still be settling; the next poll retries.
+    } finally {
+      traceInFlight = false;
+    }
+  }
+
+  function refreshTraceSoon() {
+    refreshTrace();
+    setTimeout(() => { if (!currentStatus.exit_ip) refreshTrace(); }, 2000);
+    setTimeout(() => { if (!currentStatus.exit_ip) refreshTrace(); }, 6000);
+  }
+
   function updateVisualState(visualState, payload = {}) {
+    const wasConnected = currentState === 'connected';
     currentState = visualState;
     if (!mainDialBtn || !ringGlow) return;
 
@@ -210,6 +240,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (railTooltipText) {
         railTooltipText.textContent = 'Tunnel Active (SOCKS5 + Proxy Ready)';
       }
+      if (!wasConnected) refreshTraceSoon();
       playRipple();
     } else if (visualState === 'connecting') {
       mainDialBtn.classList.add('border-[#f2711c]');
@@ -447,6 +478,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (tabBtnAdvanced) tabBtnAdvanced.addEventListener('click', () => setSettingsTab(true));
 
   // Custom Dropdown Helper
+  // Inline SVG tick: the Material Symbols font is no longer bundled, so the
+  // old ligature span rendered the literal word "check" and the hard-coded
+  // tick never left the first entry.
+  const CHECK_ICON = '<svg class="dd-check w-3.5 h-3.5 text-[#f2711c]" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+
+  function selectDropdownOption(panel, opt) {
+    panel.querySelectorAll('[data-value]').forEach((el) => {
+      el.classList.remove('bg-[#2a2a32]');
+      el.querySelectorAll('.dd-check, .material-symbols-outlined').forEach((icon) => icon.remove());
+    });
+    opt.classList.add('bg-[#2a2a32]');
+    opt.insertAdjacentHTML('beforeend', CHECK_ICON);
+  }
+
+  // Keeps each dropdown tick on the value that is actually stored.
+  function syncDropdownTick(panelId, value) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    const match = Array.from(panel.querySelectorAll('[data-value]'))
+      .find((el) => el.getAttribute('data-value') === String(value));
+    if (match) selectDropdownOption(panel, match);
+  }
+
   function setupCustomDropdown(btnId, panelId, labelId, onChange) {
     const btn = document.getElementById(btnId);
     const panel = document.getElementById(panelId);
@@ -471,17 +525,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const text = opt.querySelector('span:first-child')?.textContent || opt.textContent;
         label.textContent = text.trim();
 
-        panel.querySelectorAll('[data-value]').forEach((el) => {
-          el.classList.remove('bg-[#2a2a32]');
-          const icon = el.querySelector('.material-symbols-outlined');
-          if (icon) icon.remove();
-        });
-
-        opt.classList.add('bg-[#2a2a32]');
-        const check = document.createElement('span');
-        check.className = 'material-symbols-outlined text-[14px] text-[#f2711c]';
-        check.textContent = 'check';
-        opt.appendChild(check);
+        selectDropdownOption(panel, opt);
 
         panel.classList.remove('open');
         const chevron = btn.querySelector('svg');
@@ -862,6 +906,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const labelObfs = document.getElementById('label-obfs');
     if (labelObfs) labelObfs.textContent = config.noize.charAt(0).toUpperCase() + config.noize.slice(1);
 
+
+    // Move each dropdown tick onto the saved value
+    syncDropdownTick('panel-proto', config.protocol);
+    syncDropdownTick('panel-obfs', config.noize);
+    syncDropdownTick('panel-bridge', config.tor_country || 'auto');
     // Scan buttons
     scanButtons.forEach((b) => {
       if (b.getAttribute('data-scan') === config.scan_mode) {
@@ -922,18 +971,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       } catch (_) {}
     }
   }, 10000);
-
-  setInterval(async () => {
-    if (currentState === 'connected') {
-      try {
-        const trace = await api.fetchTraceInfo(config.socks_port);
-        if (trace && trace.ip) {
-          currentStatus.exit_ip = trace.ip;
-          currentStatus.colo = trace.colo;
-          currentStatus.loc = trace.loc;
-          updateVisualState('connected', currentStatus);
-        }
-      } catch (_) {}
-    }
+  setInterval(() => {
+    if (currentState === 'connected') refreshTrace();
   }, 25000);
 });
