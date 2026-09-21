@@ -115,5 +115,36 @@ export const api = {
         callback(event.payload);
       });
     }
+  },
+
+  async onOtpRequest(callback) {
+    if (hasTauri() && window.__TAURI__.event) {
+      return await window.__TAURI__.event.listen('aether-otp-request', (event) => {
+        callback(event.payload);
+      });
+    }
+  },
+
+  async submitOtpCode(code) {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('team_otp_submit', { code });
+    }
+    console.log('[Dev Mode] submitOtpCode');
+    return Promise.resolve();
+  },
+
+  async checkForUpdates() {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('check_for_updates');
+    }
+    return { current: '2.0.0', latest: '2.0.0', update_available: false, url: 'https://github.com/emad1381/Aether/releases' };
+  },
+
+  async setLaunchAtStartup(enable, cfg) {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('set_launch_at_startup', { enable, cfg });
+    }
+    console.log('[Dev Mode] setLaunchAtStartup:', enable);
+    return Promise.resolve();
   }
 };

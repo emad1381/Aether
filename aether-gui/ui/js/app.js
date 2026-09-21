@@ -24,6 +24,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     tor_mode: 'carry',
     tor_bridges: false,
     tor_country: 'auto',
+    tor_bind: '',
+    wiw_outer: '',
+    wiw_inner: '',
+    mim_outer: '',
+    mim_inner: '',
+    fragment: false,
+    fragment_size: '16-32',
+    fragment_delay: '2-10',
     launch_at_startup: false,
     start_minimized: false,
     close_to_tray: true,
@@ -709,10 +717,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     api.saveGuiConfig(config);
   });
 
-  // 2. Startup Toggle
+  // 2. Startup Toggle — also writes the HKCU Run entry so it takes effect now
   setupToggleSwitch('toggle-startup', config.launch_at_startup, (checked) => {
     config.launch_at_startup = checked;
-    api.saveGuiConfig(config);
+    api.setLaunchAtStartup(checked, config);
   });
 
   // 3. Minimized Toggle
@@ -759,6 +767,85 @@ document.addEventListener('DOMContentLoaded', async () => {
     api.saveGuiConfig(config);
   });
 
+  // 7. ClientHello Fragmentation Toggle (applies to the MASQUE HTTP/2 carrier)
+  setupToggleSwitch('toggle-fragment', config.fragment, (checked) => {
+    config.fragment = checked;
+    api.saveGuiConfig(config);
+  });
+
+  // Persist the advanced engine fields whenever they change.
+  [
+    'cfg-bind', 'cfg-dns', 'cfg-bypass', 'cfg-force', 'cfg-block',
+    'cfg-upstream', 'cfg-peer', 'cfg-wiw-outer', 'cfg-wiw-inner',
+    'cfg-mim-outer', 'cfg-mim-inner', 'cfg-tor-bind',
+    'cfg-fragment-size', 'cfg-fragment-delay', 'cfg-team',
+    'auth-email', 'auth-access-token', 'auth-client-id', 'auth-client-secret'
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => {
+      syncFormToConfig();
+      api.saveGuiConfig(config);
+    });
+  });
+
+  // Zero Trust one-time-code dialog. The engine asks on a log line and waits
+  // on its stdin; submitting writes the code back to the running process.
+  const otpModal = document.getElementById('otp-modal');
+  const otpInput = document.getElementById('otp-input');
+  const otpSubtitle = document.getElementById('otp-modal-subtitle');
+  const otpHint = document.getElementById('otp-modal-hint');
+  const otpSubmit = document.getElementById('otp-submit');
+  const otpCancel = document.getElementById('otp-cancel');
+
+  function openOtpModal(payload) {
+    if (!otpModal) return;
+    if (otpSubtitle) {
+      otpSubtitle.textContent = `A login code was emailed to ${payload.email || 'you'} (attempt ${payload.attempt || 1})`;
+    }
+    if (otpHint) {
+      otpHint.textContent = 'Enter the one-time code. Three attempts are allowed; the sign-in fails if the code never arrives.';
+    }
+    otpModal.classList.remove('hidden');
+    setTimeout(() => {
+      otpModal.classList.remove('opacity-0');
+      if (otpInput) otpInput.focus();
+    }, 10);
+  }
+
+  function closeOtpModal() {
+    if (!otpModal) return;
+    otpModal.classList.add('opacity-0');
+    setTimeout(() => otpModal.classList.add('hidden'), 150);
+    if (otpInput) otpInput.value = '';
+  }
+
+  async function submitOtp() {
+    const code = (otpInput && otpInput.value.trim()) || '';
+    if (!code) {
+      if (otpInput) otpInput.focus();
+      return;
+    }
+    try {
+      await api.submitOtpCode(code);
+      closeOtpModal();
+    } catch (e) {
+      if (otpHint) otpHint.textContent = `Could not deliver the code: ${e}`;
+    }
+  }
+
+  if (otpSubmit) otpSubmit.addEventListener('click', submitOtp);
+  if (otpCancel) otpCancel.addEventListener('click', closeOtpModal);
+  if (otpInput) {
+    otpInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitOtp();
+    });
+  }
+
+  await api.onOtpRequest((payload) => {
+    openOtpModal(payload || {});
+  });
+
   // Check for Updates Modal
   const btnCheckUpdates = document.getElementById('btn-check-updates');
   const iconCheckUpdates = document.getElementById('icon-check-updates');
@@ -787,18 +874,41 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (btnCheckUpdates) {
-    btnCheckUpdates.addEventListener('click', () => {
+    btnCheckUpdates.addEventListener('click', async () => {
       if (isCheckingUpdates) return;
       isCheckingUpdates = true;
       if (iconCheckUpdates) iconCheckUpdates.classList.add('animate-spin');
       if (textCheckUpdates) textCheckUpdates.textContent = 'Checking...';
 
-      setTimeout(() => {
+      try {
+        const info = await api.checkForUpdates();
+        const title = document.getElementById('update-modal-title');
+        const body = document.getElementById('update-modal-body');
+        const link = document.getElementById('update-modal-link');
+        if (title) {
+          title.textContent = info.update_available ? 'Update available' : 'You are up to date';
+        }
+        if (body) {
+          body.textContent = info.update_available
+            ? `You are on v${info.current}; v${info.latest} is out.`
+            : `v${info.current} is the latest release.`;
+        }
+        if (link) {
+          link.textContent = info.url;
+          link.classList.toggle('hidden', !info.update_available);
+        }
+        openUpdateModal();
+      } catch (e) {
+        const title = document.getElementById('update-modal-title');
+        const body = document.getElementById('update-modal-body');
+        if (title) title.textContent = 'Update check failed';
+        if (body) body.textContent = `Could not reach GitHub: ${e}`;
+        openUpdateModal();
+      } finally {
         isCheckingUpdates = false;
         if (iconCheckUpdates) iconCheckUpdates.classList.remove('animate-spin');
         if (textCheckUpdates) textCheckUpdates.textContent = 'Check for updates';
-        openUpdateModal();
-      }, 700);
+      }
     });
   }
 
@@ -827,6 +937,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       tor_mode: 'carry',
       tor_bridges: false,
       tor_country: 'auto',
+      tor_bind: '',
+      wiw_outer: '',
+      wiw_inner: '',
+      mim_outer: '',
+      mim_inner: '',
+      fragment: false,
+      fragment_size: '16-32',
+      fragment_delay: '2-10',
       launch_at_startup: false,
       start_minimized: false,
       close_to_tray: true,
@@ -865,6 +983,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     const forceInput = document.getElementById('cfg-force');
     if (forceInput) config.route_direct = forceInput.value.trim();
 
+    const blockInput = document.getElementById('cfg-block');
+    if (blockInput) config.route_block = blockInput.value.trim();
+
+    const upstreamInput = document.getElementById('cfg-upstream');
+    if (upstreamInput) config.upstream = upstreamInput.value.trim();
+
+    const peerInput = document.getElementById('cfg-peer');
+    if (peerInput) config.peer = peerInput.value.trim();
+
+    const wiwOuter = document.getElementById('cfg-wiw-outer');
+    if (wiwOuter) config.wiw_outer = wiwOuter.value.trim();
+    const wiwInner = document.getElementById('cfg-wiw-inner');
+    if (wiwInner) config.wiw_inner = wiwInner.value.trim();
+    const mimOuter = document.getElementById('cfg-mim-outer');
+    if (mimOuter) config.mim_outer = mimOuter.value.trim();
+    const mimInner = document.getElementById('cfg-mim-inner');
+    if (mimInner) config.mim_inner = mimInner.value.trim();
+
+    const torBind = document.getElementById('cfg-tor-bind');
+    if (torBind) config.tor_bind = torBind.value.trim();
+
+    const fragSize = document.getElementById('cfg-fragment-size');
+    if (fragSize) config.fragment_size = fragSize.value.trim();
+    const fragDelay = document.getElementById('cfg-fragment-delay');
+    if (fragDelay) config.fragment_delay = fragDelay.value.trim();
+
     const teamInput = document.getElementById('cfg-team');
     if (teamInput) config.team = teamInput.value.trim();
 
@@ -892,6 +1036,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     setVal('cfg-dns', config.dns || '1.1.1.1, 1.0.0.1');
     setVal('cfg-bypass', config.bypass_list);
     setVal('cfg-force', config.route_direct || '');
+    setVal('cfg-block', config.route_block || '');
+    setVal('cfg-upstream', config.upstream || '');
+    setVal('cfg-peer', config.peer || '');
+    setVal('cfg-wiw-outer', config.wiw_outer || '');
+    setVal('cfg-wiw-inner', config.wiw_inner || '');
+    setVal('cfg-mim-outer', config.mim_outer || '');
+    setVal('cfg-mim-inner', config.mim_inner || '');
+    setVal('cfg-tor-bind', config.tor_bind || '');
+    setVal('cfg-fragment-size', config.fragment_size || '16-32');
+    setVal('cfg-fragment-delay', config.fragment_delay || '2-10');
     setVal('cfg-team', config.team || '');
     setVal('auth-email', config.access_email || '');
     setVal('auth-access-token', config.access_token || '');

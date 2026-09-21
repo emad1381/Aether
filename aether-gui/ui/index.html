@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Aether</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Fonts resolve to the system stacks declared in the tailwind config below;
+       external fonts are not loaded because the Tauri CSP is 'self'-only. -->
   <link rel="stylesheet" href="./css/style.css">
   <script src="./vendor/tailwindcss.js"></script>
   <script>
@@ -42,8 +43,8 @@
             "error-container": "#93000a"
           },
           fontFamily: {
-            "body": ["Inter", "sans-serif"],
-            "mono": ["JetBrains Mono", "monospace"]
+            "body": ["Inter", "Segoe UI Variable", "Segoe UI", "system-ui", "sans-serif"],
+            "mono": ["JetBrains Mono", "Cascadia Code", "Consolas", "ui-monospace", "monospace"]
           }
         }
       }
@@ -493,12 +494,12 @@
               <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-3">
                 <div class="flex flex-col pr-4 max-w-md">
                   <span class="text-[13px] font-medium text-on-surface">Tunnel routing mode</span>
-                  <span class="text-[12px] text-on-surface-variant">Proxy mode routes configured apps. System-wide routes all Windows browsers and apps through the tunnel.</span>
+                  <span class="text-[12px] text-on-surface-variant">Proxy mode serves apps that point at the SOCKS address. System proxy sets the Windows proxy so browsers and most apps follow it automatically (no TUN driver is installed).</span>
                 </div>
                 <div class="flex flex-col items-end gap-1">
                   <div class="inline-flex bg-[#141417] p-0.5 rounded-lg border border-[#222227]" id="tunnel-mode-group">
                     <button data-mode="proxy" class="px-3.5 py-1.5 rounded-md text-xs font-medium bg-[#222228] text-on-surface border border-[#393944]/50 transition-colors focus:outline-none" type="button">Proxy (SOCKS5)</button>
-                    <button data-mode="system-wide" class="px-3.5 py-1.5 rounded-md text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors focus:outline-none" type="button">System-wide (TUN)</button>
+                    <button data-mode="system-wide" class="px-3.5 py-1.5 rounded-md text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors focus:outline-none" type="button">System proxy (all apps)</button>
                   </div>
                   <span id="tunnel-mode-hint" class="text-[10px] text-[#2dd4bf] font-mono">Loopback proxy active on 127.0.0.1:1819</span>
                 </div>
@@ -645,27 +646,95 @@
               </div>
             </div>
 
+            <!-- ENGINE SECTION -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">ENGINE</span>
+              <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-upstream">Upstream proxy</label>
+                  <span class="text-[12px] text-on-surface-variant">Dial out through a proxy already running here, e.g. socks5://127.0.0.1:1080</span>
+                </div>
+                <div class="w-full md:w-80">
+                  <input id="cfg-upstream" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="socks5://127.0.0.1:1080" spellcheck="false"/>
+                </div>
+              </div>
+              <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-peer">Force endpoint</label>
+                  <span class="text-[12px] text-on-surface-variant">Skip the scan and use this ip:port as the MASQUE/WireGuard gateway</span>
+                </div>
+                <div class="w-full md:w-80">
+                  <input id="cfg-peer" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="162.159.192.1:443" spellcheck="false"/>
+                </div>
+              </div>
+              <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                  <span class="text-[13px] font-medium text-on-surface">Nested tunnel hops</span>
+                  <span class="text-[12px] text-on-surface-variant">gool and MASQUE-in-MASQUE outer/inner endpoints (ip:port). Blank means the scan picks them.</span>
+                </div>
+                <div class="w-full md:w-80 grid grid-cols-2 gap-2">
+                  <input id="cfg-wiw-outer" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="gool outer" spellcheck="false"/>
+                  <input id="cfg-wiw-inner" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="gool inner" spellcheck="false"/>
+                  <input id="cfg-mim-outer" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="mim outer" spellcheck="false"/>
+                  <input id="cfg-mim-inner" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="mim inner" spellcheck="false"/>
+                </div>
+              </div>
+              <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-tor-bind">Tor proxy listen address</label>
+                  <span class="text-[12px] text-on-surface-variant">Where the tor SOCKS proxy listens (default 127.0.0.1:1820; the engine moves aside automatically on a clash)</span>
+                </div>
+                <div class="w-full md:w-80">
+                  <input id="cfg-tor-bind" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="127.0.0.1:1820" spellcheck="false"/>
+                </div>
+              </div>
+              <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                  <span class="text-[13px] font-medium text-on-surface">ClientHello fragmentation (HTTP/2)</span>
+                  <span class="text-[12px] text-on-surface-variant">Split the TLS hello on the MASQUE HTTP/2 carrier to beat SNI inspectors (size / delay ranges)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <input id="cfg-fragment-size" class="w-24 bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="16-32" spellcheck="false"/>
+                  <input id="cfg-fragment-delay" class="w-24 bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="2-10" spellcheck="false"/>
+                  <button id="toggle-fragment" aria-checked="false" class="w-10 h-5 rounded-full bg-[#222228] p-0.5 transition-colors focus:outline-none flex items-center justify-start" role="switch" type="button">
+                    <div class="w-4 h-4 rounded-full bg-[#393944] transition-transform"></div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+
             <!-- ROUTING SECTION -->
             <div class="flex flex-col">
               <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">ROUTING</span>
-              <!-- Never route through tunnel -->
+              <!-- Windows system proxy bypass -->
               <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
                 <div class="flex flex-col pr-4 max-w-md pt-0.5">
-                  <label class="text-[13px] font-medium text-on-surface" for="cfg-bypass">Never route through tunnel (Bypass)</label>
-                  <span class="text-[12px] text-on-surface-variant">Domains or IP ranges bypassing the tunnel (e.g. Iranian sites, bank.ir, LAN)</span>
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-bypass">Windows proxy bypass list</label>
+                  <span class="text-[12px] text-on-surface-variant">Hosts Windows itself must never send to the proxy (system proxy setting, e.g. localhost, LAN, *.ir)</span>
                 </div>
                 <div class="w-full md:w-80">
                   <textarea id="cfg-bypass" rows="2" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60 resize-none leading-relaxed" spellcheck="false">&lt;local&gt;;localhost;127.*;10.*;192.168.*;172.16.*;*.ir;bank.ir</textarea>
                 </div>
               </div>
-              <!-- Always route through tunnel -->
+              <!-- Direct: leave through the real connection, not the tunnel -->
               <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
                 <div class="flex flex-col pr-4 max-w-md pt-0.5">
-                  <label class="text-[13px] font-medium text-on-surface" for="cfg-force">Always route through tunnel (Force)</label>
-                  <span class="text-[12px] text-on-surface-variant">Domains or IP ranges explicitly forced through proxy</span>
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-force">Direct connection (skip the tunnel)</label>
+                  <span class="text-[12px] text-on-surface-variant">These destinations go out through your real internet connection, NOT the tunnel (engine --route-direct). Use for banks and domestic sites.</span>
                 </div>
                 <div class="w-full md:w-80">
-                  <textarea id="cfg-force" rows="2" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60 resize-none leading-relaxed" placeholder="10.0.0.0/8, corp.internal" spellcheck="false"></textarea>
+                  <textarea id="cfg-force" rows="2" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60 resize-none leading-relaxed" placeholder="10.0.0.0/8, corp.internal, bank.ir" spellcheck="false"></textarea>
+                </div>
+              </div>
+              <!-- Block: refuse the destination entirely -->
+              <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+                <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-block">Block entirely (never connect)</label>
+                  <span class="text-[12px] text-on-surface-variant">Connections to these destinations are refused outright (engine --route-block). Use for ads and trackers.</span>
+                </div>
+                <div class="w-full md:w-80">
+                  <textarea id="cfg-block" rows="2" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60 resize-none leading-relaxed" placeholder="ads.example.com, port:25" spellcheck="false"></textarea>
                 </div>
               </div>
             </div>
@@ -686,6 +755,28 @@
     </main>
   </div>
 
+  <!-- Zero Trust Email Code Modal (the engine asks on a log line, we answer over its stdin) -->
+  <div id="otp-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 hidden opacity-0 transition-opacity duration-150">
+    <div class="bg-[#18181c] border border-[#2d2d35] rounded-xl w-full max-w-sm p-6 flex flex-col gap-3 scale-95 transition-transform duration-150">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-[#f2711c]/15 border border-[#f2711c]/30 flex items-center justify-center">
+          <svg class="w-4 h-4 text-[#f2711c]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <div>
+          <h3 class="text-[15px] font-semibold text-on-surface">Zero Trust sign-in</h3>
+          <p id="otp-modal-subtitle" class="text-[11px] font-mono text-on-surface-variant">A login code was emailed to you</p>
+        </div>
+      </div>
+      <input id="otp-input" inputmode="numeric" autocomplete="one-time-code" maxlength="12" class="w-full bg-[#141417] border border-[#2d2d35] focus:border-[#f2711c]/60 rounded-lg px-3 py-2 text-center text-[18px] tracking-[0.35em] font-mono text-on-surface outline-none" placeholder="••••••" spellcheck="false"/>
+      <p id="otp-modal-hint" class="text-[11px] text-on-surface-variant leading-relaxed">Enter the one-time code. You have 3 attempts; the engine cancels the sign-in if the code never arrives.</p>
+      <div class="flex items-center justify-end gap-2.5 mt-1">
+        <button id="otp-cancel" class="px-3.5 py-2 rounded-lg text-[12px] font-mono text-[#8e8e98] hover:text-on-surface transition-colors focus:outline-none" type="button">Cancel</button>
+        <button id="otp-submit" class="px-4 py-2 rounded-lg text-[12px] font-mono bg-[#f2711c] hover:bg-[#ff7b29] text-[#0d0d0f] font-semibold transition-colors focus:outline-none" type="button">Submit code</button>
+      </div>
+    </div>
+  </div>
+
+
   <!-- Custom Software Update Modal Dialog -->
   <div id="update-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 hidden opacity-0">
     <div id="update-modal-dialog" class="bg-[#18181c] border border-[#2d2d35] rounded-xl w-full max-w-md p-6 relative flex flex-col scale-95">
@@ -697,8 +788,9 @@
           <svg class="w-4 h-4 text-[#f2711c]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </div>
         <div>
-          <h3 class="text-[16px] font-semibold text-on-surface">Aether is Up to Date</h3>
-          <p class="text-[12px] font-mono text-[#2dd4bf]">v2.0.0 (Latest version installed)</p>
+          <h3 id="update-modal-title" class="text-[16px] font-semibold text-on-surface">Aether is Up to Date</h3>
+          <p id="update-modal-body" class="text-[12px] font-mono text-[#2dd4bf]">v2.0.0 (Latest version installed)</p>
+          <p id="update-modal-link" class="text-[11px] font-mono text-[#ffb691] mt-1 hidden break-all select-text"></p>
         </div>
       </div>
       <div class="my-3 py-3 border-y border-[#24242a]">

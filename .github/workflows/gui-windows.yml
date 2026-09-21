@@ -9,7 +9,9 @@ on:
   workflow_dispatch:
   push:
     paths:
+      - "aether/**"
       - "aether-gui/**"
+      - "pt-build.sh"
       - ".github/workflows/gui-windows.yml"
 
 permissions:

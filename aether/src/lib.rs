@@ -118,7 +118,7 @@ pub async fn run_with(args: Vec<String>) -> Result<()> {
     let pinned_wiw = wiw_endpoints_from_env()?;
     let pinned_mim = mim_endpoints_from_env()?;
 
-    let protocol = match std::env::var("AETHER_PROTOCOL") {
+    let mut protocol = match std::env::var("AETHER_PROTOCOL") {
         Ok(v) => Protocol::parse(&v),
         // Naming a warp-in-warp hop only makes sense for warp-in-warp.
         Err(_) if !pinned_wiw.is_empty() => Protocol::WarpInWarp,
@@ -161,12 +161,16 @@ pub async fn run_with(args: Vec<String>) -> Result<()> {
         }
         tor::Mode::Reverse => {
             if matches!(protocol, Protocol::WireGuard | Protocol::WarpInWarp) {
-                return Err(AetherError::Other(format!(
-                    "tor carries tcp only and warp's wireguard endpoints answer on udp alone, so \
-                     {} can never be reached through tor; use --masque, which this mode runs over \
-                     http/2, or put tor inside the tunnel instead with --tor",
+                // Tor only carries TCP while WARP's WireGuard edges answer on UDP
+                // alone, so reverse mode can never dial this carrier. Fall back to
+                // MASQUE over HTTP/2 instead of dying: the Windows GUI offers
+                // reverse on every protocol, and a working tunnel beats an error.
+                log::warn!(
+                    "[-] {} cannot be reached through tor (tor carries tcp only); falling back to MASQUE over http/2",
                     protocol.label()
-                )));
+                );
+                protocol = Protocol::Masque;
+                std::env::set_var("AETHER_PROTOCOL", "masque");
             }
 
             let socks = tor::start_reverse(tor::state_dir(&base_config)).await?;
@@ -1399,7 +1403,7 @@ async fn run_masque_tunnel(
     listen: SocketAddr,
 ) -> Result<()> {
     let h2 = masque_h2::enabled();
-    let dial = if h2 { masque_h2::h2_peer(peer) } else { peer };
+    let dial = masque_outer_dial(peer);
 
     let mut hop = establish_masque(
         identity,
@@ -1443,6 +1447,18 @@ async fn run_masque_tunnel(
 }
 
 const MASQUE_DATAGRAM_OVERHEAD: usize = quic::MAX_DATAGRAM_SIZE - TUNNEL_MTU;
+
+/// The outer MASQUE peer as it must be dialled on the active carrier. The scan
+/// always returns the UDP (HTTP/3) peer; the HTTP/2 carrier speaks TCP and may
+/// use a different address via AETHER_MASQUE_H2_PEER, so map it here. Every
+/// path that establishes an outer MASQUE hop must go through this helper.
+fn masque_outer_dial(peer: SocketAddr) -> SocketAddr {
+    if masque_h2::enabled() {
+        masque_h2::h2_peer(peer)
+    } else {
+        peer
+    }
+}
 
 fn mim_inner_budget(outer_mtu: usize, inner_peer: SocketAddr, h2: bool) -> (usize, usize) {
     if h2 {
@@ -1565,7 +1581,7 @@ pub async fn run_masque_in_masque(
     log::info!("[*] establishing outer MASQUE tunnel to {peer}...");
     let mut outer = establish_masque(
         primary,
-        peer,
+        masque_outer_dial(peer),
         ech,
         h2,
         outer_mtu,
@@ -2227,7 +2243,7 @@ async fn run_wireguard_tunnel(
 
 type TunnelExit = tokio::task::JoinHandle<Result<()>>;
 
-fn http_proxy_listen() -> Option<SocketAddr> {
+pub fn http_proxy_listen() -> Option<SocketAddr> {
     let raw = std::env::var("AETHER_HTTP_PROXY").ok()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {

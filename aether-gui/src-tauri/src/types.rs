@@ -84,6 +84,9 @@ pub struct TunnelConfig {
     pub tor_country: Option<String>,
 
     #[serde(default)]
+    pub tor_bind: Option<String>, // explicit tor socks listen address, e.g. 127.0.0.1:1821
+
+    #[serde(default)]
     pub launch_at_startup: bool,
 
     #[serde(default)]
@@ -178,6 +181,7 @@ impl Default for TunnelConfig {
             tor_mode: default_tor_mode(),
             tor_bridges: false,
             tor_country: None,
+            tor_bind: None,
             launch_at_startup: false,
             start_minimized: false,
             close_to_tray: true,

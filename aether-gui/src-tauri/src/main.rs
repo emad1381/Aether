@@ -103,6 +103,92 @@ fn start_dragging(app: AppHandle) {
     }
 }
 
+/// Answer the engine's Zero Trust email-code prompt over the child stdin.
+#[tauri::command]
+async fn team_otp_submit(
+    code: String,
+    supervisor: TauriState<'_, Arc<Supervisor>>,
+) -> Result<(), String> {
+    supervisor.submit_team_code(code).await
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct UpdateInfo {
+    pub current: String,
+    pub latest: String,
+    pub update_available: bool,
+    pub url: String,
+}
+
+/// Real update check: compare against the latest GitHub release.
+#[tauri::command]
+async fn check_for_updates() -> Result<UpdateInfo, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("aether-gui/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let release: serde_json::Value = client
+        .get("https://api.github.com/repos/emad1381/Aether/releases/latest")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let latest = release
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim_start_matches('v')
+        .to_string();
+    if latest.is_empty() {
+        return Err("no release tag found".to_string());
+    }
+    let url = release
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://github.com/emad1381/Aether/releases")
+        .to_string();
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    Ok(UpdateInfo {
+        update_available: latest != current,
+        current,
+        latest,
+        url,
+    })
+}
+
+#[cfg(windows)]
+fn apply_launch_at_startup(enable: bool) -> Result<(), String> {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
+    let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
+    let (run, _) = hkcu
+        .create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+        .map_err(|e| format!("run key: {e}"))?;
+    if enable {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let command = format!("\"{}\"", exe.display());
+        run.set_value("Aether", &command)
+            .map_err(|e| format!("autostart: {e}"))
+    } else {
+        let _ = run.delete_value("Aether");
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_launch_at_startup(_enable: bool) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+fn set_launch_at_startup(enable: bool, mut cfg: TunnelConfig) -> Result<(), String> {
+    apply_launch_at_startup(enable)?;
+    cfg.launch_at_startup = enable;
+    save_config(&cfg)
+}
+
 fn main() {
     let supervisor = Arc::new(Supervisor::new());
 
@@ -148,8 +234,11 @@ fn main() {
                         let app_handle = app.clone();
                         let sup = supervisor.inner().clone();
                         tauri::async_runtime::spawn(async move {
+                            let cfg = load_config();
+                            let socks = format!("127.0.0.1:{}", cfg.socks_port);
+                            let http = cfg.http_port.map(|p| format!("127.0.0.1:{p}"));
                             let _ = sup.stop_tunnel(app_handle).await;
-                            let _ = set_windows_proxy(false, "127.0.0.1:1819", None, "");
+                            let _ = set_windows_proxy(false, &socks, http.as_deref(), "");
                             std::process::exit(0);
                         });
                     }
@@ -166,13 +255,27 @@ fn main() {
                 })
                 .build(app)?;
 
+            // Honor the saved startup behavior: keep the run-at-login registry
+            // entry in sync, and open hidden when the user asked for tray-only.
+            {
+                let cfg = load_config();
+                let _ = apply_launch_at_startup(cfg.launch_at_startup);
+                if cfg.start_minimized {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.hide();
+                    }
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Minimize to tray instead of killing
-                api.prevent_close();
-                let _ = window.hide();
+                if load_config().close_to_tray {
+                    // Minimize to tray instead of killing
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -187,7 +290,10 @@ fn main() {
             minimize_window,
             maximize_window,
             close_window,
-            start_dragging
+            start_dragging,
+            team_otp_submit,
+            check_for_updates,
+            set_launch_at_startup
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aether GUI");

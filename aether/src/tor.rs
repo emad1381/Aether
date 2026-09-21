@@ -43,6 +43,38 @@ pub fn listen_address() -> SocketAddr {
         .unwrap_or_else(|| "127.0.0.1:1820".parse().expect("a literal address"))
 }
 
+/// The Tor proxy address actually used for this run. The GUI always exposes an
+/// HTTP CONNECT proxy on 127.0.0.1:1820 as well, so a default Tor bind would
+/// collide with it and the whole run would die on startup. Unless the user
+/// pinned AETHER_TOR_BIND by hand, step aside to the first free 127.0.0.1
+/// port from 1821 upward and say so loudly in the log.
+pub fn resolve_listen_avoiding(occupied: &[SocketAddr]) -> SocketAddr {
+    let wanted = listen_address();
+    if std::env::var("AETHER_TOR_BIND").is_ok() {
+        return wanted;
+    }
+    if !occupied.contains(&wanted) && port_is_free(wanted) {
+        return wanted;
+    }
+    for port in 1821..=1831u16 {
+        let candidate = SocketAddr::new(wanted.ip(), port);
+        if !occupied.contains(&candidate) && port_is_free(candidate) {
+            if candidate != wanted {
+                log::warn!(
+                    "[-] {wanted} is already taken, serving the tor proxy on {candidate} instead"
+                );
+            }
+            return candidate;
+        }
+    }
+    log::warn!("[-] no free tor proxy port near {wanted}; trying it anyway");
+    wanted
+}
+
+fn port_is_free(addr: SocketAddr) -> bool {
+    std::net::TcpListener::bind(addr).is_ok()
+}
+
 pub fn state_dir(base_config: &str) -> PathBuf {
     if let Some(dir) = std::env::var("AETHER_TOR_DIR")
         .ok()
@@ -720,7 +752,9 @@ mod with_tor {
 
     pub async fn run_chain(through: SocketAddr, state: PathBuf) -> Result<()> {
         init_tracing();
-        let listen = listen_address();
+        let http = crate::http_proxy_listen();
+        let occupied: Vec<SocketAddr> = http.into_iter().chain([through]).collect();
+        let listen = super::resolve_listen_avoiding(&occupied);
         let listener = crate::socks::bind_listener("tor socks5", listen).await?;
 
         wait_for_proxy(through).await;
@@ -746,7 +780,9 @@ mod with_tor {
 
     pub async fn start_reverse(state: PathBuf) -> Result<SocketAddr> {
         init_tracing();
-        let listen = listen_address();
+        let http = crate::http_proxy_listen();
+        let occupied: Vec<SocketAddr> = http.into_iter().collect();
+        let listen = super::resolve_listen_avoiding(&occupied);
         let listener = crate::socks::bind_listener("tor socks5", listen).await?;
 
         log::info!("[*] bootstrapping tor; the tunnel will be dialled through it");
@@ -835,6 +871,27 @@ mod tests {
         assert_eq!(listen_address(), "127.0.0.1:1820".parse().unwrap());
         std::env::set_var("AETHER_TOR_BIND", "127.0.0.1:9150");
         assert_eq!(listen_address(), "127.0.0.1:9150".parse().unwrap());
+        clear();
+    }
+
+    #[test]
+    fn the_default_steps_aside_when_1820_is_taken() {
+        clear();
+        // 127.0.0.1:1820 is the tor default AND the GUI http-proxy default.
+        let guard = std::net::TcpListener::bind("127.0.0.1:1820").expect("reserve 1820");
+        let picked = resolve_listen_avoiding(&["127.0.0.1:1820".parse().unwrap()]);
+        assert_ne!(picked, "127.0.0.1:1820".parse().unwrap());
+        assert!(picked.port() >= 1821);
+        drop(guard);
+        clear();
+    }
+
+    #[test]
+    fn a_pinned_bind_is_never_moved() {
+        clear();
+        std::env::set_var("AETHER_TOR_BIND", "127.0.0.1:9150");
+        let picked = resolve_listen_avoiding(&["127.0.0.1:9150".parse().unwrap()]);
+        assert_eq!(picked, "127.0.0.1:9150".parse().unwrap());
         clear();
     }
 

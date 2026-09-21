@@ -19,6 +19,7 @@ use crate::types::{LogEntry, State, TunnelConfig, TunnelStatus};
 
 pub struct Supervisor {
     child: Mutex<Option<Child>>,
+    child_stdin: Mutex<Option<tokio::process::ChildStdin>>,
     current_config: Mutex<Option<TunnelConfig>>,
     status: Mutex<TunnelStatus>,
     start_time: Mutex<Option<Instant>>,
@@ -32,6 +33,7 @@ impl Supervisor {
         let (kill_tx, _) = broadcast::channel(8);
         Self {
             child: Mutex::new(None),
+            child_stdin: Mutex::new(None),
             current_config: Mutex::new(None),
             status: Mutex::new(TunnelStatus {
                 state: State::Disconnected,
@@ -344,9 +346,24 @@ impl Supervisor {
     ) -> Result<(), String> {
         let mut cmd = tokio::process::Command::new(bin_path);
         cmd.args(args);
-        cmd.stdin(std::process::Stdio::null()); // NEVER wait for STDIN input!
+        // stdin stays piped instead of null: the engine never blocks on it
+        // except when a Zero Trust email login code is due, and the GUI answers
+        // that over stdin from the OTP dialog. Nothing else is ever written.
+        cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+
+        // There is no --tor-country flag; the engine only reads the env var.
+        if cfg.tor_bridges {
+            if let Some(country) = cfg
+                .tor_country
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty() && *c != "auto")
+            {
+                cmd.env("AETHER_TOR_COUNTRY", country);
+            }
+        }
 
         #[cfg(windows)]
         {
@@ -392,7 +409,9 @@ impl Supervisor {
 
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
+        let stdin = child.stdin.take();
 
+        *self.child_stdin.lock() = stdin;
         *self.child.lock() = Some(child);
 
         // Spawn log readers
@@ -448,11 +467,28 @@ impl Supervisor {
     }
 
     async fn kill_current_child(&self) {
+        *self.child_stdin.lock() = None;
         let child_opt = self.child.lock().take();
         if let Some(mut child) = child_opt {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
+    }
+
+    /// Answer the engine's Zero Trust email-code prompt. The child announces
+    /// the prompt on a log line and reads the answer from stdin, one line.
+    pub async fn submit_team_code(&self, code: String) -> Result<(), String> {
+        use tokio::io::AsyncWriteExt;
+        let mut guard = self.child_stdin.lock();
+        let Some(writer) = guard.as_mut() else {
+            return Err("no tunnel process is waiting for a code".to_string());
+        };
+        writer
+            .write_all(code.trim().as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        writer.write_all(b"\n").await.map_err(|e| e.to_string())?;
+        writer.flush().await.map_err(|e| e.to_string())
     }
 
     pub async fn stop_tunnel(&self, app: AppHandle) -> Result<(), String> {
@@ -461,8 +497,16 @@ impl Supervisor {
 
         self.kill_current_child().await;
 
-        // Deactivate system proxy if enabled
-        let _ = set_windows_proxy(false, "127.0.0.1:1819", None, "");
+        // Deactivate system proxy if enabled, pointing at the port that was
+        // actually set, not a hardcoded default.
+        {
+            let saved = self.current_config.lock().clone().unwrap_or_default();
+            let socks_addr = format!("127.0.0.1:{}", saved.socks_port);
+            let http_addr = saved
+                .http_port
+                .map(|p| format!("127.0.0.1:{p}"));
+            let _ = set_windows_proxy(false, &socks_addr, http_addr.as_deref(), "");
+        }
 
         {
             let mut st = self.status.lock();
@@ -813,6 +857,28 @@ fn chrono_now() -> String {
     dt.format("%H:%M:%S").to_string()
 }
 
+/// The engine prints this marker when it is blocked waiting for a Zero Trust
+/// email login code on stdin. It must match zerotrust::CODE_PROMPT_MARKER in
+/// the core: "[zerotrust] login-code-needed attempt=N email=E".
+const OTP_MARKER: &str = "[zerotrust] login-code-needed";
+
+fn parse_otp_request(line: &str) -> Option<(String, u32)> {
+    if !line.contains(OTP_MARKER) {
+        return None;
+    }
+    let tail = line.split(OTP_MARKER).nth(1)?;
+    let mut email: Option<String> = None;
+    let mut attempt: u32 = 1;
+    for token in tail.split_whitespace() {
+        if let Some(v) = token.strip_prefix("email=") {
+            email = Some(v.to_string());
+        } else if let Some(v) = token.strip_prefix("attempt=") {
+            attempt = v.parse().unwrap_or(1);
+        }
+    }
+    email.map(|e| (e, attempt))
+}
+
 fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto: Option<&str>) {
     let level = if line.contains("ERROR") || line.contains("[-] ") || line.starts_with("error:") {
         "ERROR"
@@ -830,6 +896,14 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto
         message: line.to_string(),
     };
     let _ = app.emit("aether-log", entry);
+
+    if let Some((email, attempt)) = parse_otp_request(line) {
+        let _ = app.emit(
+            "aether-otp-request",
+            serde_json::json!({ "email": email, "attempt": attempt }),
+        );
+        return;
+    }
 
     // State machine extraction
     if is_socks_listener_ready(line) {
@@ -917,30 +991,30 @@ fn find_aether_binary() -> Result<PathBuf, String> {
 fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
     let mut args = Vec::new();
 
+    let tor_only = cfg.tor_enabled && cfg.tor_mode == "tor-only";
+
     // SOCKS5 and optional HTTP proxy
     args.push("--bind".to_string());
     args.push(format!("127.0.0.1:{}", cfg.socks_port));
 
-    let effective_http = cfg.http_port.or(Some(1820));
-    if let Some(http) = effective_http {
-        args.push("--http-proxy".to_string());
-        args.push(format!("127.0.0.1:{http}"));
+    // Only pass --http-proxy when the user asked for one. In tor-only mode the
+    // --bind listener itself IS the tor exit, so an extra HTTP proxy on the
+    // same port would collide with it.
+    if !tor_only {
+        if let Some(http) = cfg.http_port {
+            args.push("--http-proxy".to_string());
+            args.push(format!("127.0.0.1:{http}"));
+        }
     }
 
     // CRITICAL: Prevent STDIN prompt for last connection:
     args.push("--no-quick-reconnect".to_string());
 
-    // Protocol selection
-    if cfg.tor_enabled {
-        match cfg.tor_mode.as_str() {
-            "reach" => args.push("--tor-reverse".to_string()),
-            "tor-only" => args.push("--tor-only".to_string()),
-            _ => args.push("--tor".to_string()),
-        }
-        if cfg.tor_bridges {
-            args.push("--tor-bridges".to_string());
-        }
-    } else {
+    // Protocol selection. Tor chain/reverse still rides a real transport, so
+    // the protocol flags go out together with the tor flag — this is what
+    // makes tor work on every protocol from the GUI. Tor-only has no tunnel
+    // at all, so it gets no protocol flag.
+    if !tor_only {
         match cfg.protocol.as_str() {
             "masque" => {
                 args.push("--masque".to_string());
@@ -986,18 +1060,27 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
                     args.push(inn.clone());
                 }
             }
-            "tor" => {
-                args.push("--tor".to_string());
-            }
-            "tor-reverse" => {
-                args.push("--tor-reverse".to_string());
-            }
-            "tor-only" => {
-                args.push("--tor-only".to_string());
-            }
             _ => {
                 args.push("--masque".to_string());
                 args.push("--h3".to_string());
+            }
+        }
+    }
+
+    if cfg.tor_enabled {
+        match cfg.tor_mode.as_str() {
+            "reach" => args.push("--tor-reverse".to_string()),
+            "tor-only" => args.push("--tor-only".to_string()),
+            _ => args.push("--tor".to_string()),
+        }
+        if cfg.tor_bridges {
+            args.push("--tor-bridges".to_string());
+        }
+        if let Some(ref bind) = cfg.tor_bind {
+            let bind = bind.trim();
+            if !bind.is_empty() {
+                args.push("--tor-bind".to_string());
+                args.push(bind.to_string());
             }
         }
     }
