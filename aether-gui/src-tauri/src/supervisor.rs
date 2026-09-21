@@ -477,18 +477,26 @@ impl Supervisor {
 
     /// Answer the engine's Zero Trust email-code prompt. The child announces
     /// the prompt on a log line and reads the answer from stdin, one line.
+    /// The stdin handle is taken out of the lock before any await so the
+    /// future stays Send, and is put back for a later prompt (a rejected code
+    /// makes the engine ask again).
     pub async fn submit_team_code(&self, code: String) -> Result<(), String> {
         use tokio::io::AsyncWriteExt;
-        let mut guard = self.child_stdin.lock();
-        let Some(writer) = guard.as_mut() else {
+        let mut taken = self.child_stdin.lock().take();
+        let Some(ref mut writer) = taken else {
             return Err("no tunnel process is waiting for a code".to_string());
         };
         writer
             .write_all(code.trim().as_bytes())
             .await
             .map_err(|e| e.to_string())?;
-        writer.write_all(b"\n").await.map_err(|e| e.to_string())?;
-        writer.flush().await.map_err(|e| e.to_string())
+        writer
+            .write_all(b"\n")
+            .await
+            .map_err(|e| e.to_string())?;
+        writer.flush().await.map_err(|e| e.to_string())?;
+        *self.child_stdin.lock() = taken;
+        Ok(())
     }
 
     pub async fn stop_tunnel(&self, app: AppHandle) -> Result<(), String> {
