@@ -225,7 +225,8 @@ pub fn generate_masque_keypair() -> Result<MasqueKeyPair> {
 fn http_client() -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .user_agent(consts::UA_REGISTER)
-        .timeout(std::time::Duration::from_secs(20));
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10));
 
     if let Some(upstream) = crate::upstream::configured() {
         builder = builder.proxy(upstream.as_reqwest_proxy()?);
@@ -435,6 +436,12 @@ where
             Ok(response) => response,
             Err(error) => {
                 last_error = AetherError::Api(format!("{label}: {error}"));
+                if error.is_connect() || error.is_timeout() {
+                    log::warn!(
+                        "[!] direct {label} unreachable ({error}); immediately falling back to camouflaged route"
+                    );
+                    return Err(last_error);
+                }
                 continue;
             }
         };

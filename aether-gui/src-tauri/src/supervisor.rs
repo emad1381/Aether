@@ -82,6 +82,95 @@ fn attach_kill_on_close_job(_child: &Child) -> Option<KillOnCloseJob> {
     Some(KillOnCloseJob)
 }
 
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
+    if let Err(_) = std::fs::create_dir_all(dst) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(src) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &target);
+        } else {
+            let _ = std::fs::copy(&path, &target);
+        }
+    }
+}
+
+/// Automatically preserve all identity files in %APPDATA%\Aether so that
+/// downloading/unzipping a fresh build in a new directory never wipes out
+/// existing Cloudflare WARP/MASQUE credentials or Psiphon state.
+fn sync_appdata_identities() {
+    let Ok(appdata) = std::env::var("APPDATA") else {
+        return;
+    };
+    let appdata_dir = std::path::PathBuf::from(appdata).join("Aether");
+    let _ = std::fs::create_dir_all(&appdata_dir);
+
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    let toml_names = [
+        "aether.toml",
+        "aether-secondary.toml",
+        "aether-masque.toml",
+        "aether-masque-secondary.toml",
+        "aether-lastconn.toml",
+        "aether-masque-lastconn.toml",
+    ];
+
+    for name in &toml_names {
+        let appdata_file = appdata_dir.join(name);
+        let current_file = current_dir.join(name);
+        if !current_file.exists() && appdata_file.exists() {
+            let _ = std::fs::copy(&appdata_file, &current_file);
+        } else if current_file.exists() && !appdata_file.exists() {
+            let _ = std::fs::copy(&current_file, &appdata_file);
+        }
+    }
+
+    let appdata_psiphon = appdata_dir.join("aether.toml-psiphon");
+    let current_psiphon = current_dir.join("aether.toml-psiphon");
+    if !current_psiphon.exists() && appdata_psiphon.exists() {
+        copy_dir_recursive(&appdata_psiphon, &current_psiphon);
+    }
+}
+
+fn backup_identities_to_appdata() {
+    let Ok(appdata) = std::env::var("APPDATA") else {
+        return;
+    };
+    let appdata_dir = std::path::PathBuf::from(appdata).join("Aether");
+    let _ = std::fs::create_dir_all(&appdata_dir);
+
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    let toml_names = [
+        "aether.toml",
+        "aether-secondary.toml",
+        "aether-masque.toml",
+        "aether-masque-secondary.toml",
+        "aether-lastconn.toml",
+        "aether-masque-lastconn.toml",
+    ];
+
+    for name in &toml_names {
+        let current_file = current_dir.join(name);
+        let appdata_file = appdata_dir.join(name);
+        if current_file.exists() {
+            let _ = std::fs::copy(&current_file, &appdata_file);
+        }
+    }
+
+    let current_psiphon = current_dir.join("aether.toml-psiphon");
+    let appdata_psiphon = appdata_dir.join("aether.toml-psiphon");
+    if current_psiphon.exists() {
+        copy_dir_recursive(&current_psiphon, &appdata_psiphon);
+    }
+}
+
 pub struct Supervisor {
     child: Mutex<Option<Child>>,
     child_stdin: Mutex<Option<tokio::process::ChildStdin>>,
@@ -142,6 +231,7 @@ impl Supervisor {
         }
 
         let bin_path = find_aether_binary()?;
+        sync_appdata_identities();
         self.is_stopping.store(false, Ordering::SeqCst);
         *self.current_config.lock() = Some(cfg.clone());
 
@@ -628,6 +718,8 @@ impl Supervisor {
         };
         let _ = app.emit("aether-log", entry);
 
+        backup_identities_to_appdata();
+
         Ok(())
     }
 
@@ -665,6 +757,7 @@ impl Supervisor {
         }
 
         let _ = app.emit("aether-status", st.clone());
+        backup_identities_to_appdata();
         let _ = app.emit(
             "aether-progress",
             serde_json::json!({ "percent": 100, "stage": "Connected" }),
