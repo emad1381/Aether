@@ -80,11 +80,54 @@ jobs:
       - name: Package archive
         shell: pwsh
         run: |
-          Copy-Item -Recurse -Force pt target/x86_64-pc-windows-msvc/release/pt
-          Copy-Item "$env:GITHUB_WORKSPACE/aether-gui/src-tauri/target/x86_64-pc-windows-msvc/release/aether-gui.exe" target/x86_64-pc-windows-msvc/release/
-          if (!(Test-Path target/x86_64-pc-windows-msvc/release/pt/psiphon-tunnel-core.exe)) { throw "psiphon-tunnel-core.exe was not produced in pt" }
-          if (!(Test-Path target/x86_64-pc-windows-msvc/release/aether-gui.exe)) { throw "aether-gui.exe was not produced" }
-          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/aether-gui.exe,target/x86_64-pc-windows-msvc/release/aether.exe,target/x86_64-pc-windows-msvc/release/pt,run-aether.bat -DestinationPath aether-windows-x86_64-gui.zip
+          $relDir = "target/x86_64-pc-windows-msvc/release"
+          Copy-Item -Recurse -Force pt "$relDir/pt"
+          Copy-Item "$env:GITHUB_WORKSPACE/aether-gui/src-tauri/target/x86_64-pc-windows-msvc/release/aether-gui.exe" "$relDir/"
+          if (!(Test-Path "$relDir/pt/psiphon-tunnel-core.exe")) { throw "psiphon-tunnel-core.exe was not produced in pt" }
+          if (!(Test-Path "$relDir/aether-gui.exe")) { throw "aether-gui.exe was not produced" }
+
+          # Seed initial Cloudflare WARP/MASQUE identities for instant zero-config cold boot
+          Write-Host "Provisioning initial Cloudflare identities..."
+          Push-Location $relDir
+          try {
+              ./aether.exe --provision-all
+          } catch {
+              Write-Warning "Could not provision initial identities: $_"
+          }
+
+          # Seed initial Psiphon server list directly from Psiphon distribution channel
+          Write-Host "Seeding initial Psiphon server list..."
+          $psiDir = "aether.toml-psiphon/ca.psiphon.PsiphonTunnel.tunnel-core"
+          New-Item -ItemType Directory -Force "$psiDir/datastore" | Out-Null
+          New-Item -ItemType Directory -Force "$psiDir/osl" | Out-Null
+          try {
+              Invoke-WebRequest -Uri "https://s3.amazonaws.com/psiphon/web/mjr4-p23r-puwl/server_list_compressed" `
+                  -OutFile "$psiDir/remote_server_list" -UseBasicParsing -TimeoutSec 30
+              Write-Host "Successfully downloaded Psiphon remote_server_list"
+          } catch {
+              Write-Warning "Could not fetch Psiphon server list: $_"
+          }
+          Pop-Location
+
+          $filesToZip = @(
+              "$relDir/aether-gui.exe",
+              "$relDir/aether.exe",
+              "$relDir/pt",
+              "run-aether.bat"
+          )
+          $optional = @(
+              "$relDir/aether.toml",
+              "$relDir/aether-secondary.toml",
+              "$relDir/aether-masque.toml",
+              "$relDir/aether-masque-secondary.toml",
+              "$relDir/aether.toml-psiphon"
+          )
+          foreach ($opt in $optional) {
+              if (Test-Path $opt) {
+                  $filesToZip += $opt
+              }
+          }
+          Compress-Archive -Path $filesToZip -DestinationPath aether-windows-x86_64-gui.zip -Force
           Get-ChildItem aether-windows-x86_64-gui.zip
 
       - name: Upload build artifact

@@ -528,6 +528,7 @@ pub fn parse_args(args: Vec<String>) -> crate::error::Result<Parsed> {
             "--perf" => set("AETHER_PERF_PROFILE", next_value!()),
             "--log-level" => set("AETHER_LOG_LEVEL", next_value!()),
             "--verbose" => set("AETHER_LOG_LEVEL", "debug"),
+            "--provision-all" | "--register-all" => set("AETHER_PROVISION_ALL", "1"),
 
             other => {
                 return Err(crate::error::AetherError::Other(format!(

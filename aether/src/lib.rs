@@ -105,6 +105,16 @@ pub async fn run_with(args: Vec<String>) -> Result<()> {
 
     install_netstack_panic_guard();
 
+    if std::env::var("AETHER_PROVISION_ALL").as_deref() == Ok("1") {
+        log::info!("[*] provisioning all identities (WireGuard and MASQUE)...");
+        let _ = load_or_provision_warp("aether.toml").await?;
+        let _ = load_or_provision_warp("aether-secondary.toml").await?;
+        let _ = load_or_provision_masque("aether-masque.toml").await?;
+        let _ = load_or_provision_masque("aether-masque-secondary.toml").await?;
+        log::info!("[+] all identities successfully provisioned and written to disk.");
+        return Ok(());
+    }
+
     let listen: SocketAddr = std::env::var("AETHER_SOCKS")
         .ok()
         .and_then(|s| s.parse().ok())
