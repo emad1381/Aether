@@ -141,6 +141,22 @@ export const api = {
     }
   },
 
+  async onProgress(callback) {
+    if (hasTauri() && window.__TAURI__.event) {
+      return await window.__TAURI__.event.listen('aether-progress', (event) => {
+        callback(event.payload);
+      });
+    }
+  },
+
+  async onExitInfo(callback) {
+    if (hasTauri() && window.__TAURI__.event) {
+      return await window.__TAURI__.event.listen('aether-exit-info', (event) => {
+        callback(event.payload);
+      });
+    }
+  },
+
   async submitOtpCode(code) {
     if (hasTauri()) {
       return await window.__TAURI__.core.invoke('team_otp_submit', { code });

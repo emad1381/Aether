@@ -150,6 +150,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const iconSync = document.getElementById('icon-connecting');
   const iconIdle = document.getElementById('icon-idle');
   const iconErr = document.getElementById('icon-error');
+  const connectingWrap = document.getElementById('connecting-spinner-wrap');
+  const dialProgressPct = document.getElementById('dial-progress-pct');
   const statusPrimary = document.getElementById('status-primary');
   const statusSecondary = document.getElementById('status-secondary');
   const railStatusDot = document.getElementById('rail-status-dot');
@@ -255,14 +257,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     ringGlow.classList.remove('animate-pulse-fast', 'animate-breathe', 'bg-[#2dd4bf]/15', 'bg-primary-container/25', 'bg-[#ef4444]/20', 'bg-[#303036]/20');
 
     // Hide all icons
-    [iconConn, iconSync, iconIdle, iconErr].forEach((ic) => ic && ic.classList.add('hidden'));
+    [iconConn, iconSync, iconIdle, iconErr, connectingWrap].forEach((ic) => ic && ic.classList.add('hidden'));
 
     if (visualState === 'connected') {
       mainDialBtn.classList.add('border-[#2dd4bf]');
       ringGlow.classList.add('bg-[#2dd4bf]/15');
+      if (connectingWrap) connectingWrap.classList.add('hidden');
+      if (dialProgressPct) dialProgressPct.textContent = '';
       if (iconConn) iconConn.classList.remove('hidden');
 
-      const loc = payload.colo ? `${payload.colo} · ${payload.loc || ''}` : 'Cloudflare Edge';
+      const loc = payload.colo ? `${payload.colo} · ${payload.loc || ''}` : (payload.loc || 'Connected Edge');
       const pingText = payload.latency_ms ? `${payload.latency_ms}ms` : 'active';
       if (statusPrimary) {
         statusPrimary.innerHTML = `Connected to ${loc} · <span class="text-secondary font-mono font-medium">${pingText}</span>`;
@@ -281,12 +285,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (visualState === 'connecting') {
       mainDialBtn.classList.add('border-[#f2711c]');
       ringGlow.classList.add('bg-primary-container/25', 'animate-pulse-fast');
+      if (connectingWrap) connectingWrap.classList.remove('hidden');
       if (iconSync) iconSync.classList.remove('hidden');
+      const pctText = dialProgressPct && dialProgressPct.textContent ? dialProgressPct.textContent : '10%';
       if (statusPrimary) {
-        statusPrimary.innerHTML = 'Negotiating cryptographic handshake…';
+        statusPrimary.innerHTML = `Establishing tunnel · <span class="text-secondary font-mono font-medium">${pctText}</span>`;
       }
       if (statusSecondary) {
-        statusSecondary.textContent = engineLabel(payload) || 'RTT PROBE · RESOLVING ANYCAST';
+        statusSecondary.textContent = engineLabel(payload) || 'NEGOTIATING ROUTE · RESOLVING ANYCAST';
       }
       if (railStatusDot) {
         railStatusDot.className = 'w-2 h-2 rounded-full bg-[#f2711c] animate-ping';
@@ -297,6 +303,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (visualState === 'error') {
       mainDialBtn.classList.add('border-[#ef4444]');
       ringGlow.classList.add('bg-[#ef4444]/20');
+      if (connectingWrap) connectingWrap.classList.add('hidden');
+      if (dialProgressPct) dialProgressPct.textContent = '';
       if (iconErr) iconErr.classList.remove('hidden');
       if (statusPrimary) {
         statusPrimary.innerHTML = '<span class="text-error font-medium">Handshake Dropped · Refused</span>';
@@ -315,6 +323,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Idle
       mainDialBtn.classList.add('border-[#303036]');
       ringGlow.classList.add('bg-[#303036]/20', 'animate-breathe');
+      if (connectingWrap) connectingWrap.classList.add('hidden');
+      if (dialProgressPct) dialProgressPct.textContent = '';
       if (iconIdle) iconIdle.classList.remove('hidden');
       if (statusPrimary) {
         statusPrimary.innerHTML = '<span class="text-outline">Engine Standby</span>';
@@ -380,6 +390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
           syncFormToConfig();
           await api.saveGuiConfig(config);
+          if (dialProgressPct) dialProgressPct.textContent = '10%';
           updateVisualState('connecting');
           await api.startTunnel(config);
         } catch (err) {
@@ -945,6 +956,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     psiphonAddr = typeof addr === 'string' ? addr.trim() : '';
     // Same ordering tolerance as the tor badge.
     if (currentState === 'connected') updateVisualState('connected', currentStatus);
+  });
+
+  await api.onProgress((payload) => {
+    const pct = payload && typeof payload === 'object' ? payload.percent : null;
+    const stage = payload && typeof payload === 'object' ? payload.stage : payload;
+    if (dialProgressPct && pct != null) {
+      dialProgressPct.textContent = `${pct}%`;
+    }
+    if (currentState === 'connecting') {
+      if (statusPrimary && stage) {
+        statusPrimary.innerHTML = `${stage} · <span class="text-secondary font-mono font-medium">${pct || 0}%</span>`;
+      }
+    }
+  });
+
+  await api.onExitInfo((payload) => {
+    if (payload && typeof payload === 'object') {
+      if (payload.ip) currentStatus.exit_ip = payload.ip;
+      if (payload.colo) currentStatus.colo = payload.colo;
+      if (payload.loc) currentStatus.loc = payload.loc;
+      if (payload.latency_ms) currentStatus.latency_ms = payload.latency_ms;
+      if (currentState === 'connected') {
+        updateVisualState('connected', currentStatus);
+      }
+    }
   });
 
   // Check for Updates Modal

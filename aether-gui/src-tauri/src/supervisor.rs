@@ -87,6 +87,10 @@ impl Supervisor {
             st.system_proxy_active = false;
             let _ = app.emit("aether-status", st.clone());
         }
+        let _ = app.emit(
+            "aether-progress",
+            serde_json::json!({ "percent": 10, "stage": "Initializing Engine..." }),
+        );
 
         // Auto Mode is deliberately disabled for an explicit Tor or Psiphon
         // configuration. Both are opt-in transports, not background matrix
@@ -511,9 +515,22 @@ impl Supervisor {
         {
             let saved = self.current_config.lock().clone().unwrap_or_default();
             let socks_addr = format!("127.0.0.1:{}", saved.socks_port);
-            let http_addr = saved
-                .http_port
-                .map(|p| format!("127.0.0.1:{p}"));
+            let tor_only = saved.tor_enabled && saved.tor_mode == "tor-only";
+            let psiphon_only = saved.psiphon_enabled && saved.psiphon_mode == "psiphon-only";
+            let http_addr = if tor_only {
+                None
+            } else if psiphon_only {
+                saved
+                    .psiphon_http
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            } else if let Some(p) = saved.http_port {
+                Some(format!("127.0.0.1:{p}"))
+            } else {
+                None
+            };
             let _ = set_windows_proxy(false, &socks_addr, http_addr.as_deref(), "");
         }
 
@@ -526,6 +543,10 @@ impl Supervisor {
             let _ = app.emit("aether-status", st.clone());
         }
         *self.start_time.lock() = None;
+        let _ = app.emit(
+            "aether-progress",
+            serde_json::json!({ "percent": 0, "stage": "Disconnected" }),
+        );
 
         let entry = LogEntry {
             timestamp: chrono_now(),
@@ -547,10 +568,21 @@ impl Supervisor {
 
         if cfg.auto_system_proxy || cfg.tunnel_mode == "system-wide" {
             let socks_addr = format!("127.0.0.1:{}", cfg.socks_port);
-            let http_addr = cfg
-                .http_port
-                .map(|p| format!("127.0.0.1:{p}"))
-                .or_else(|| Some("127.0.0.1:1820".to_string()));
+            let tor_only = cfg.tor_enabled && cfg.tor_mode == "tor-only";
+            let psiphon_only = cfg.psiphon_enabled && cfg.psiphon_mode == "psiphon-only";
+            let http_addr = if tor_only {
+                None
+            } else if psiphon_only {
+                cfg.psiphon_http
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            } else if let Some(p) = cfg.http_port {
+                Some(format!("127.0.0.1:{p}"))
+            } else {
+                None
+            };
             if let Ok(()) =
                 set_windows_proxy(true, &socks_addr, http_addr.as_deref(), &cfg.bypass_list)
             {
@@ -559,6 +591,10 @@ impl Supervisor {
         }
 
         let _ = app.emit("aether-status", st.clone());
+        let _ = app.emit(
+            "aether-progress",
+            serde_json::json!({ "percent": 100, "stage": "Connected" }),
+        );
         self.connected_notify.notify_waiters();
     }
 
@@ -656,12 +692,97 @@ fn is_data_plane_confirmation(line: &str) -> bool {
     line.contains("tunnel validated (end-to-end data confirmed)")
 }
 
+fn parse_exit_line(line: &str) -> Option<(String, Option<String>, Option<String>, Option<u64>)> {
+    let marker = if let Some(idx) = line.find("exit: ") {
+        &line[idx + 6..]
+    } else if let Some(idx) = line.find("egress: ") {
+        &line[idx + 8..]
+    } else {
+        return None;
+    };
+
+    let parts: Vec<&str> = marker.split(',').map(str::trim).collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    let ip = parts[0].to_string();
+    let mut loc: Option<String> = None;
+    let mut colo: Option<String> = None;
+    let mut latency: Option<u64> = None;
+
+    for part in &parts[1..] {
+        if part.contains("via") {
+            let sub: Vec<&str> = part.split("via").map(str::trim).collect();
+            if sub.len() == 2 {
+                loc = Some(sub[0].to_string());
+                colo = Some(sub[1].to_string());
+            }
+        } else if part.ends_with("ms to cloudflare") || part.ends_with("ms") {
+            let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(ms) = digits.parse::<u64>() {
+                latency = Some(ms);
+            }
+        } else if part.len() == 2 && part.chars().all(|c| c.is_ascii_uppercase()) {
+            loc = Some(part.to_string());
+        } else if part.len() == 3 && part.chars().all(|c| c.is_ascii_uppercase()) {
+            colo = Some(part.to_string());
+        }
+    }
+
+    Some((ip, colo, loc, latency))
+}
+
+fn extract_progress(line: &str) -> Option<(u8, String)> {
+    if line.contains("hunting for a working") || line.contains("hunting for") {
+        Some((20, "Hunting for optimal endpoint...".to_string()))
+    } else if line.contains("[AUTO #") {
+        Some((35, "Testing route candidates...".to_string()))
+    } else if line.contains("starting psiphon") {
+        Some((30, "Starting Psiphon engine...".to_string()))
+    } else if line.contains("psiphon: Config migration") {
+        Some((45, "Initializing Psiphon config...".to_string()))
+    } else if line.contains("psiphon reached a server") {
+        Some((75, "Psiphon server connected".to_string()))
+    } else if line.contains("bootstrapping tor") {
+        Some((25, "Bootstrapping Tor network...".to_string()))
+    } else if line.contains("tor bootstrap:") {
+        if let Some(idx) = line.find("tor bootstrap: ") {
+            let rest = &line[idx + 15..];
+            if let Some(pct_end) = rest.find('%') {
+                if let Ok(pct) = rest[..pct_end].trim().parse::<u8>() {
+                    let scaled = 30 + ((pct as f32 / 100.0) * 60.0) as u8;
+                    let msg = rest[pct_end + 1..].trim_start_matches(':').trim();
+                    let stage = if !msg.is_empty() {
+                        format!("Tor: {msg} ({pct}%)")
+                    } else {
+                        format!("Tor Bootstrap {pct}%")
+                    };
+                    return Some((scaled.min(92), stage));
+                }
+            }
+        }
+        Some((50, "Tor bootstrapping...".to_string()))
+    } else if line.contains("psiphon is ready;") || line.contains("tor is ready;") {
+        Some((95, "Tunnel established, finalizing proxy...".to_string()))
+    } else if line.contains("tunnel validated") || line.contains("socks5 server listening") || line.contains("socks5 listening on") {
+        Some((98, "Tunnel validated, setting system proxy...".to_string()))
+    } else if line.contains("exit:") || line.contains("egress:") {
+        Some((100, "Connected".to_string()))
+    } else {
+        None
+    }
+}
+
 /// The engine binds its SOCKS listener only once a route is genuinely usable.
 /// The MASQUE family prints "...; exposing socks5" for the outer hop of
 /// MASQUE-in-MASQUE before any inner hop answers, so that line alone must
 /// never be read as a connection.
 fn is_socks_listener_ready(line: &str) -> bool {
-    line.contains("socks5 server listening") || line.contains("socks5 listening on")
+    line.contains("socks5 server listening")
+        || line.contains("socks5 listening on")
+        || line.contains("psiphon is ready;")
+        || line.contains("tor is ready;")
 }
 
 fn is_bind_conflict(line: &str) -> bool {
@@ -981,6 +1102,36 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto
                 }
             }
         }
+    }
+
+    if let Some((exit_ip, colo, loc, latency)) = parse_exit_line(line) {
+        if let Some(state) = app.try_state::<Arc<Supervisor>>() {
+            let mut st = state.status.lock();
+            st.exit_ip = Some(exit_ip.clone());
+            if let Some(c) = colo.as_ref() {
+                st.colo = Some(c.clone());
+            }
+            if let Some(l) = latency {
+                st.latency_ms = Some(l);
+            }
+            let _ = app.emit("aether-status", st.clone());
+        }
+        let _ = app.emit(
+            "aether-exit-info",
+            serde_json::json!({
+                "ip": exit_ip,
+                "colo": colo,
+                "loc": loc,
+                "latency_ms": latency
+            }),
+        );
+    }
+
+    if let Some((percent, stage)) = extract_progress(line) {
+        let _ = app.emit(
+            "aether-progress",
+            serde_json::json!({ "percent": percent, "stage": stage }),
+        );
     }
 }
 
@@ -1466,5 +1617,34 @@ mod tests {
             None
         );
         assert_eq!(parse_psiphon_addr("[+] psiphon is ready; soon"), None);
+    }
+
+    #[test]
+    fn socks_listener_ready_recognizes_all_modes() {
+        assert!(is_socks_listener_ready("socks5 server listening on 127.0.0.1:1819"));
+        assert!(is_socks_listener_ready("[+] psiphon is ready; 127.0.0.1:1819 leaves through psiphon"));
+        assert!(is_socks_listener_ready("[+] psiphon is ready; the tunnel goes out through 127.0.0.1:1821"));
+        assert!(is_socks_listener_ready("[+] tor is ready; 127.0.0.1:1819 leaves through tor"));
+        assert!(!is_socks_listener_ready("[*] starting psiphon with no tunnel underneath it"));
+    }
+
+    #[test]
+    fn exit_line_parser_extracts_telemetry() {
+        let (ip, colo, loc, lat) = parse_exit_line(
+            "[+] psiphon exit: 212.227.6.72, DE via FRA, 335ms to cloudflare"
+        ).unwrap();
+        assert_eq!(ip, "212.227.6.72");
+        assert_eq!(loc.as_deref(), Some("DE"));
+        assert_eq!(colo.as_deref(), Some("FRA"));
+        assert_eq!(lat, Some(335));
+    }
+
+    #[test]
+    fn progress_extractor_scales_stages() {
+        assert_eq!(extract_progress("hunting for a working endpoint").map(|(p, _)| p), Some(20));
+        assert_eq!(extract_progress("starting psiphon").map(|(p, _)| p), Some(30));
+        assert_eq!(extract_progress("psiphon reached a server at 1.2.3.4").map(|(p, _)| p), Some(75));
+        assert_eq!(extract_progress("[+] psiphon is ready; 127.0.0.1:1819 leaves through psiphon").map(|(p, _)| p), Some(95));
+        assert_eq!(extract_progress("[+] psiphon exit: 212.227.6.72, DE via FRA, 335ms to cloudflare").map(|(p, _)| p), Some(100));
     }
 }

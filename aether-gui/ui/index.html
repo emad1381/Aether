@@ -134,10 +134,13 @@
               <svg id="icon-connected" class="w-12 h-12 text-[#2dd4bf] stroke-[2] hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path d="M4.5 12.75l6 6 9-13.5" stroke-linecap="round" stroke-linejoin="round"></path>
               </svg>
-              <!-- 2. Connecting / Scanning: Precision Spinner -->
-              <svg id="icon-connecting" class="w-12 h-12 text-primary-container stroke-[1.75] animate-spin hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" stroke-linecap="round" stroke-linejoin="round"></path>
-              </svg>
+              <!-- 2. Connecting / Scanning: Precision Spinner & Progress -->
+              <div id="connecting-spinner-wrap" class="flex flex-col items-center justify-center hidden pointer-events-none">
+                <svg id="icon-connecting" class="w-10 h-10 text-primary-container stroke-[1.75] animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+                <span id="dial-progress-pct" class="text-[13px] font-mono font-bold text-primary-container mt-1">10%</span>
+              </div>
               <!-- 3. Idle: Power Icon -->
               <svg id="icon-idle" class="w-12 h-12 text-outline stroke-[1.75]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path d="M5.636 5.636a9 9 0 1012.728 0M12 3v9" stroke-linecap="round" stroke-linejoin="round"></path>
