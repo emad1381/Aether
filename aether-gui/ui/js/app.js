@@ -71,6 +71,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const saved = await api.getSavedConfig();
     if (saved) {
       config = { ...config, ...saved };
+      if (!config.http_port) {
+        config.http_port = 1820;
+      }
     }
   } catch (_) {}
 
@@ -1111,6 +1114,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Sync Input Fields to Config
   function syncFormToConfig() {
+    if (!config.http_port) {
+      config.http_port = 1820;
+    }
+
     const bindInput = document.getElementById('cfg-bind');
     if (bindInput) {
       const parts = bindInput.value.trim().split(':');

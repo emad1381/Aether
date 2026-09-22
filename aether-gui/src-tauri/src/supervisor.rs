@@ -689,10 +689,10 @@ impl Supervisor {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .or_else(|| saved.http_port.map(|p| format!("127.0.0.1:{p}")))
-            } else if let Some(p) = saved.http_port {
-                Some(format!("127.0.0.1:{p}"))
+                    .or_else(|| Some("127.0.0.1:1820".to_string()))
             } else {
-                None
+                let p = saved.http_port.unwrap_or(1820);
+                Some(format!("127.0.0.1:{p}"))
             };
             let _ = set_windows_proxy(false, &socks_addr, http_addr.as_deref(), "");
         }
@@ -744,10 +744,10 @@ impl Supervisor {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .or_else(|| cfg.http_port.map(|p| format!("127.0.0.1:{p}")))
-            } else if let Some(p) = cfg.http_port {
-                Some(format!("127.0.0.1:{p}"))
+                    .or_else(|| Some("127.0.0.1:1820".to_string()))
             } else {
-                None
+                let p = cfg.http_port.unwrap_or(1820);
+                Some(format!("127.0.0.1:{p}"))
             };
             if let Ok(()) =
                 set_windows_proxy(true, &socks_addr, http_addr.as_deref(), &cfg.bypass_list)
@@ -1353,10 +1353,9 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
     // --bind listener itself IS the tor exit, so an extra HTTP proxy on the
     // same port would collide with it.
     if !tor_only && !psiphon_only {
-        if let Some(http) = cfg.http_port {
-            args.push("--http-proxy".to_string());
-            args.push(format!("127.0.0.1:{http}"));
-        }
+        let http = cfg.http_port.unwrap_or(1820);
+        args.push("--http-proxy".to_string());
+        args.push(format!("127.0.0.1:{http}"));
     }
 
     // CRITICAL: Prevent STDIN prompt for last connection:
@@ -1495,7 +1494,8 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
-            .or_else(|| cfg.http_port.map(|p| format!("127.0.0.1:{p}")));
+            .or_else(|| cfg.http_port.map(|p| format!("127.0.0.1:{p}")))
+            .or_else(|| Some("127.0.0.1:1820".to_string()));
 
         if let Some(ref http) = psiphon_http {
             args.push("--psiphon-http".to_string());

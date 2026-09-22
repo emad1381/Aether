@@ -8,8 +8,8 @@ pub struct TunnelConfig {
     #[serde(default = "default_socks_port")]
     pub socks_port: u16, // default: 1819
 
-    #[serde(default)]
-    pub http_port: Option<u16>, // optional: 1820
+    #[serde(default = "default_http_port")]
+    pub http_port: Option<u16>, // default: 1820
 
     #[serde(default = "default_scan_mode")]
     pub scan_mode: String, // "turbo", "balanced", "thorough", "stealth", "ironclad"
@@ -152,6 +152,9 @@ fn default_protocol() -> String {
 }
 fn default_socks_port() -> u16 {
     1819
+}
+fn default_http_port() -> Option<u16> {
+    Some(1820)
 }
 fn default_scan_mode() -> String {
     "balanced".to_string()

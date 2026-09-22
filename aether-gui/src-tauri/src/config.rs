@@ -15,12 +15,20 @@ fn config_path() -> PathBuf {
 
 pub fn load_config() -> TunnelConfig {
     let path = config_path();
-    read_config(&path).unwrap_or_default()
+    let mut cfg = read_config(&path).unwrap_or_default();
+    if cfg.http_port.is_none() || cfg.http_port == Some(0) {
+        cfg.http_port = Some(1820);
+    }
+    cfg
 }
 
 pub fn save_config(cfg: &TunnelConfig) -> Result<(), String> {
     let path = config_path();
-    write_config(&path, cfg)
+    let mut sanitized = cfg.clone();
+    if sanitized.http_port.is_none() || sanitized.http_port == Some(0) {
+        sanitized.http_port = Some(1820);
+    }
+    write_config(&path, &sanitized)
 }
 
 fn read_config(path: &std::path::Path) -> Option<TunnelConfig> {
