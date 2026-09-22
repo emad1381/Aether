@@ -17,9 +17,75 @@ use crate::ping::measure_latency;
 use crate::proxy::set_windows_proxy;
 use crate::types::{LogEntry, State, TunnelConfig, TunnelStatus};
 
+#[cfg(windows)]
+pub struct KillOnCloseJob(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for KillOnCloseJob {}
+#[cfg(windows)]
+unsafe impl Sync for KillOnCloseJob {}
+
+#[cfg(windows)]
+impl Drop for KillOnCloseJob {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub struct KillOnCloseJob;
+
+#[cfg(windows)]
+fn attach_kill_on_close_job(child: &Child) -> Option<KillOnCloseJob> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+
+    let pid = child.id()?;
+    unsafe {
+        let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            CloseHandle(process);
+            return None;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) != 0;
+        let assigned = configured && AssignProcessToJobObject(job, process) != 0;
+        CloseHandle(process);
+        if assigned {
+            Some(KillOnCloseJob(job))
+        } else {
+            CloseHandle(job);
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_kill_on_close_job(_child: &Child) -> Option<KillOnCloseJob> {
+    Some(KillOnCloseJob)
+}
+
 pub struct Supervisor {
     child: Mutex<Option<Child>>,
     child_stdin: Mutex<Option<tokio::process::ChildStdin>>,
+    current_job: Mutex<Option<KillOnCloseJob>>,
     current_config: Mutex<Option<TunnelConfig>>,
     status: Mutex<TunnelStatus>,
     start_time: Mutex<Option<Instant>>,
@@ -34,6 +100,7 @@ impl Supervisor {
         Self {
             child: Mutex::new(None),
             child_stdin: Mutex::new(None),
+            current_job: Mutex::new(None),
             current_config: Mutex::new(None),
             status: Mutex::new(TunnelStatus {
                 state: State::Disconnected,
@@ -66,6 +133,8 @@ impl Supervisor {
     }
 
     pub async fn start_tunnel(&self, app: AppHandle, cfg: TunnelConfig) -> Result<(), String> {
+        self.kill_current_child().await;
+
         if self.status.lock().state != State::Disconnected
             && self.status.lock().state != State::Error
         {
@@ -380,37 +449,7 @@ impl Supervisor {
             .spawn()
             .map_err(|e| format!("Failed to spawn aether executable at '{}': {e}", bin_path.display()))?;
 
-        #[cfg(windows)]
-        unsafe {
-            use windows_sys::Win32::Foundation::CloseHandle;
-            use windows_sys::Win32::System::JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
-                JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            };
-            use windows_sys::Win32::System::Threading::{
-                OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
-            };
-
-            if let Some(pid) = child.id() {
-                let proc_handle = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
-                if !proc_handle.is_null() {
-                    let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
-                    if !job.is_null() {
-                        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                        SetInformationJobObject(
-                            job,
-                            JobObjectExtendedLimitInformation,
-                            &info as *const _ as _,
-                            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                        );
-                        AssignProcessToJobObject(job, proc_handle);
-                    }
-                    CloseHandle(proc_handle);
-                }
-            }
-        }
+        *self.current_job.lock() = attach_kill_on_close_job(&child);
 
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -466,6 +505,19 @@ impl Supervisor {
                     }
                 }
             }
+
+            if let Some(state) = app_clone.try_state::<Arc<Supervisor>>() {
+                if !state.is_stopping.load(Ordering::SeqCst) {
+                    let mut st = state.status.lock();
+                    if st.state == State::Connecting {
+                        st.state = State::Error;
+                        if st.error_message.is_none() {
+                            st.error_message = Some("Tunnel process exited unexpectedly".to_string());
+                        }
+                        let _ = app_clone.emit("aether-status", st.clone());
+                    }
+                }
+            }
         });
 
         Ok(())
@@ -473,10 +525,30 @@ impl Supervisor {
 
     async fn kill_current_child(&self) {
         *self.child_stdin.lock() = None;
+        *self.current_job.lock() = None;
         let child_opt = self.child.lock().take();
         if let Some(mut child) = child_opt {
+            #[cfg(windows)]
+            if let Some(pid) = child.id() {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
             let _ = child.kill().await;
             let _ = child.wait().await;
+        }
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/IM", "psiphon-tunnel-core.exe"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
         }
     }
 
@@ -614,6 +686,17 @@ impl Supervisor {
         let mut st = self.status.lock();
         st.latency_ms = Some(ms);
         let _ = app.emit("aether-status", st.clone());
+    }
+
+    pub fn set_error(&self, app: &AppHandle, msg: String) {
+        let mut st = self.status.lock();
+        st.state = State::Error;
+        st.error_message = Some(msg);
+        let _ = app.emit("aether-status", st.clone());
+        let _ = app.emit(
+            "aether-progress",
+            serde_json::json!({ "percent": 0, "stage": "Connection Error" }),
+        );
     }
 }
 
@@ -813,55 +896,6 @@ fn find_free_port_pair(socks_base: u16, http_base: u16, start_offset: u16) -> Op
     }
     None
 }
-
-#[cfg(windows)]
-struct KillOnCloseJob(windows_sys::Win32::Foundation::HANDLE);
-
-#[cfg(windows)]
-unsafe impl Send for KillOnCloseJob {}
-
-#[cfg(windows)]
-impl Drop for KillOnCloseJob {
-    fn drop(&mut self) {
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0); }
-    }
-}
-
-#[cfg(windows)]
-fn attach_kill_on_close_job(child: &Child) -> Option<KillOnCloseJob> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
-        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
-
-    let pid = child.id()?;
-    unsafe {
-        let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
-        if process.is_null() { return None; }
-        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job.is_null() { CloseHandle(process); return None; }
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        let configured = SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as _,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        ) != 0;
-        let assigned = configured && AssignProcessToJobObject(job, process) != 0;
-        CloseHandle(process);
-        if assigned { Some(KillOnCloseJob(job)) } else { CloseHandle(job); None }
-    }
-}
-
-#[cfg(not(windows))]
-struct KillOnCloseJob;
-
-#[cfg(not(windows))]
-fn attach_kill_on_close_job(_child: &Child) -> Option<KillOnCloseJob> { Some(KillOnCloseJob) }
 
 #[allow(clippy::too_many_arguments)]
 async fn run_candidate_once(
@@ -1132,6 +1166,14 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto
             "aether-progress",
             serde_json::json!({ "percent": percent, "stage": stage }),
         );
+    }
+
+    if line.contains("the socks5 listener cannot use")
+        || line.contains("Only one usage of each socket address")
+    {
+        if let Some(state) = app.try_state::<Arc<Supervisor>>() {
+            state.set_error(app, line.to_string());
+        }
     }
 }
 
