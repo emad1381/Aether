@@ -31,7 +31,13 @@ pub fn set_windows_proxy(
 
         if enabled {
             let server_str = if let Some(http) = http_addr {
-                format!("http={http};https={http};socks={socks_addr}")
+                // Modern Windows 10 & 11 Settings (ms-settings:network-proxy) requires a clean
+                // "host:port" format (e.g. "127.0.0.1:1820"). Multi-protocol strings with prefixes
+                // like "http=...;https=...;socks=..." are not parsed by modern Settings and get dumped
+                // entirely into the "Proxy IP address" box while leaving "Port" blank, breaking proxying.
+                // A clean "host:port" is parsed properly into Host and Port fields, and WinINet uses it
+                // as the default HTTP/HTTPS CONNECT proxy for all system traffic.
+                http.to_string()
             } else {
                 format!("socks={socks_addr}")
             };

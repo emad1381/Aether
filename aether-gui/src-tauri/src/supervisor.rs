@@ -598,6 +598,7 @@ impl Supervisor {
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
+                    .or_else(|| saved.http_port.map(|p| format!("127.0.0.1:{p}")))
             } else if let Some(p) = saved.http_port {
                 Some(format!("127.0.0.1:{p}"))
             } else {
@@ -650,6 +651,7 @@ impl Supervisor {
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
+                    .or_else(|| cfg.http_port.map(|p| format!("127.0.0.1:{p}")))
             } else if let Some(p) = cfg.http_port {
                 Some(format!("127.0.0.1:{p}"))
             } else {
@@ -1394,12 +1396,17 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
                 args.push(bin.to_string());
             }
         }
-        if let Some(ref http) = cfg.psiphon_http {
-            let http = http.trim();
-            if !http.is_empty() {
-                args.push("--psiphon-http".to_string());
-                args.push(http.to_string());
-            }
+        let psiphon_http = cfg
+            .psiphon_http
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| cfg.http_port.map(|p| format!("127.0.0.1:{p}")));
+
+        if let Some(ref http) = psiphon_http {
+            args.push("--psiphon-http".to_string());
+            args.push(http.clone());
         }
     }
 
