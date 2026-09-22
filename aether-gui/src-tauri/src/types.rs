@@ -90,6 +90,30 @@ pub struct TunnelConfig {
     pub tor_bind: Option<String>, // explicit tor socks listen address, e.g. 127.0.0.1:1821
 
     #[serde(default)]
+    pub psiphon_enabled: bool,
+
+    #[serde(default = "default_psiphon_mode")]
+    pub psiphon_mode: String, // "carry", "reach", "psiphon-only"
+
+    #[serde(default)]
+    pub psiphon_region: Option<String>, // two-letter country code, e.g. "DE"
+
+    #[serde(default = "default_psiphon_shape")]
+    pub psiphon_shape: String, // "auto", "cdn", "direct"
+
+    #[serde(default)]
+    pub psiphon_cdn_ips: String, // comma/space-separated fronting edge addresses
+
+    #[serde(default)]
+    pub psiphon_cdn_sni: String, // server names to present to those edges
+
+    #[serde(default)]
+    pub psiphon_bin: Option<String>, // explicit path to psiphon-tunnel-core, blank = auto-detect
+
+    #[serde(default)]
+    pub psiphon_http: Option<String>, // also serve psiphon as an http/connect proxy here
+
+    #[serde(default)]
     pub launch_at_startup: bool,
 
     #[serde(default)]
@@ -150,6 +174,12 @@ fn default_tunnel_mode() -> String {
 fn default_tor_mode() -> String {
     "carry".to_string()
 }
+fn default_psiphon_mode() -> String {
+    "carry".to_string()
+}
+fn default_psiphon_shape() -> String {
+    "auto".to_string()
+}
 fn default_bypass_list() -> String {
     "<local>;localhost;127.*;10.*;192.168.*;172.16.*;*.ir".to_string()
 }
@@ -186,6 +216,14 @@ impl Default for TunnelConfig {
             tor_country: None,
             tor_bridge_lines: None,
             tor_bind: None,
+            psiphon_enabled: false,
+            psiphon_mode: default_psiphon_mode(),
+            psiphon_region: None,
+            psiphon_shape: default_psiphon_shape(),
+            psiphon_cdn_ips: String::new(),
+            psiphon_cdn_sni: String::new(),
+            psiphon_bin: None,
+            psiphon_http: None,
             launch_at_startup: false,
             start_minimized: false,
             close_to_tray: true,

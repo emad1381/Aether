@@ -182,6 +182,7 @@
                 <span class="text-[12px] text-outline">Public Egress IP</span>
                 <span id="dt-exit" class="text-[12px] text-on-surface font-mono">-- <span class="text-outline text-[10px]">(Anycast)</span></span>
                 <span id="dt-tor-badge" class="ml-1.5 text-[10px] font-mono text-[#2dd4bf] bg-[#2dd4bf]/15 px-1.5 py-0.5 rounded font-medium hidden">TOR</span>
+                <span id="dt-psiphon-badge" class="ml-1.5 text-[10px] font-mono text-[#f59e0b] bg-[#f59e0b]/15 px-1.5 py-0.5 rounded font-medium hidden">PSIPHON</span>
               </div>
               <div class="h-px w-full bg-[#222227] my-1"></div>
               <div class="flex items-center justify-between py-1">
@@ -575,6 +576,111 @@
                       <span>🇷🇺 Russia</span>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- PSIPHON SECTION -->
+            <div class="flex flex-col">
+              <span class="text-[11px] font-mono tracking-[0.2em] font-semibold text-[#71717a] uppercase mb-2">PSIPHON</span>
+              <!-- Psiphon Switch -->
+              <div class="flex flex-col py-3 border-b border-[#222227] gap-3">
+                <div class="flex items-center justify-between">
+                  <div class="flex flex-col pr-4 max-w-md">
+                    <span class="text-[13px] font-medium text-on-surface">Psiphon Integration</span>
+                    <span class="text-[12px] text-on-surface-variant">Route traffic through the Psiphon tunnel network (psiphon-tunnel-core)</span>
+                  </div>
+                  <button id="toggle-psiphon" aria-checked="false" class="w-10 h-5 rounded-full bg-[#222228] p-0.5 transition-colors focus:outline-none flex items-center justify-start" role="switch" type="button">
+                    <div class="w-4 h-4 rounded-full bg-[#393944] transition-transform"></div>
+                  </button>
+                </div>
+                <!-- Psiphon Sub-options -->
+                <div id="psiphon-sub-options" class="flex flex-col gap-2 pl-4 py-1 border-l-2 border-[#222227] ml-1 opacity-40 pointer-events-none transition-opacity duration-150">
+                  <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input checked class="accent-[#f2711c] w-3.5 h-3.5 cursor-pointer bg-[#18181c]" name="psiphon-mode" type="radio" value="carry"/>
+                    <span class="text-[12px] text-on-surface">Carry Psiphon inside the WARP tunnel (default)</span>
+                  </label>
+                  <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input class="accent-[#f2711c] w-3.5 h-3.5 cursor-pointer bg-[#18181c]" name="psiphon-mode" type="radio" value="reach"/>
+                    <span class="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors">Reach the WARP tunnel through Psiphon</span>
+                  </label>
+                  <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input class="accent-[#f2711c] w-3.5 h-3.5 cursor-pointer bg-[#18181c]" name="psiphon-mode" type="radio" value="psiphon-only"/>
+                    <span class="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors">Psiphon only, no WARP tunnel</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Psiphon shape (auto / cdn / direct) -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <span class="text-[13px] font-medium text-on-surface">Psiphon tunnel shape</span>
+                  <span class="text-[12px] text-on-surface-variant">cdn restricts to fronted-Meek CDN edges; direct skips CDN fronting</span>
+                </div>
+                <div class="relative min-w-[240px] custom-dropdown" id="dropdown-psiphon-shape-wrapper">
+                  <button id="btn-psiphon-shape" class="w-full bg-[#18181c] hover:bg-[#222228] border border-[#2d2d35] text-on-surface text-[12px] font-mono px-3 py-2 rounded-lg flex items-center justify-between transition-colors focus:outline-none" type="button">
+                    <span id="label-psiphon-shape" class="font-medium">Auto</span>
+                    <svg class="w-3.5 h-3.5 text-on-surface-variant pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  </button>
+                  <div id="panel-psiphon-shape" class="dropdown-panel absolute right-0 top-full mt-1 w-full bg-[#1a1a1e] border border-[#2d2d35] rounded-lg p-1 z-30 flex flex-col gap-0.5">
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface bg-[#2a2a32] cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="auto">
+                      <span>Auto</span>
+                      <svg class="dd-check w-3.5 h-3.5 text-[#f2711c]" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="cdn">
+                      <span>CDN fronting only</span>
+                    </div>
+                    <div class="px-3 py-1.5 rounded text-[12px] font-mono text-on-surface cursor-pointer flex items-center justify-between hover:bg-[#2a2a32]" data-value="direct">
+                      <span>Direct (no fronting)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Psiphon region -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col pr-4 max-w-md">
+                  <label class="text-[13px] font-medium text-on-surface" for="cfg-psiphon-region">Exit region</label>
+                  <span class="text-[12px] text-on-surface-variant">Two-letter country for the Psiphon exit, e.g. DE (blank = auto)</span>
+                </div>
+                <div class="w-full sm:w-64">
+                  <input id="cfg-psiphon-region" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" maxlength="2" placeholder="auto" spellcheck="false"/>
+                </div>
+              </div>
+
+              <!-- Psiphon CDN fronting -->
+              <div class="flex flex-col py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div class="flex flex-col pr-4 max-w-md">
+                    <label class="text-[13px] font-medium text-on-surface" for="cfg-psiphon-cdn-ips">CDN fronting edges</label>
+                    <span class="text-[12px] text-on-surface-variant">Comma-separated addresses to try as CDN fronts (blank = built-in spec)</span>
+                  </div>
+                  <input id="cfg-psiphon-cdn-ips" class="w-full sm:w-80 bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="1.2.3.4, 5.6.7.8" spellcheck="false"/>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div class="flex flex-col pr-4 max-w-md">
+                    <label class="text-[13px] font-medium text-on-surface" for="cfg-psiphon-cdn-sni">CDN SNI names</label>
+                    <span class="text-[12px] text-on-surface-variant">Server names to present to those edges</span>
+                  </div>
+                  <input id="cfg-psiphon-cdn-sni" class="w-full sm:w-80 bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="cdn.example.com" spellcheck="false"/>
+                </div>
+              </div>
+
+              <!-- Psiphon binary + http proxy -->
+              <div class="flex flex-col py-3 border-b border-[#222227] gap-2">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div class="flex flex-col pr-4 max-w-md">
+                    <label class="text-[13px] font-medium text-on-surface" for="cfg-psiphon-bin">psiphon-tunnel-core path</label>
+                    <span class="text-[12px] text-on-surface-variant">Blank auto-detects the binary beside aether or on PATH</span>
+                  </div>
+                  <input id="cfg-psiphon-bin" class="w-full sm:w-80 bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="auto-detect" spellcheck="false"/>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div class="flex flex-col pr-4 max-w-md">
+                    <label class="text-[13px] font-medium text-on-surface" for="cfg-psiphon-http">Psiphon HTTP proxy</label>
+                    <span class="text-[12px] text-on-surface-variant">Also serve psiphon as an HTTP CONNECT proxy here (blank = off)</span>
+                  </div>
+                  <input id="cfg-psiphon-http" class="w-full sm:w-80 bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60" type="text" placeholder="127.0.0.1:1822" spellcheck="false"/>
                 </div>
               </div>
             </div>

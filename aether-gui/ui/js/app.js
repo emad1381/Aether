@@ -26,6 +26,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     tor_country: 'auto',
     tor_bind: '',
     tor_bridge_lines: '',
+    psiphon_enabled: false,
+    psiphon_mode: 'carry',
+    psiphon_region: '',
+    psiphon_shape: 'auto',
+    psiphon_cdn_ips: '',
+    psiphon_cdn_sni: '',
+    psiphon_bin: '',
+    psiphon_http: '',
     wiw_outer: '',
     wiw_inner: '',
     mim_outer: '',
@@ -151,6 +159,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const dtProto = document.getElementById('dt-proto');
   const dtExit = document.getElementById('dt-exit');
   const dtTorBadge = document.getElementById('dt-tor-badge');
+  const dtPsiphonBadge = document.getElementById('dt-psiphon-badge');
   const dtCipher = document.getElementById('dt-cipher');
   const dtMtu = document.getElementById('dt-mtu');
   const ftActiveEngine = document.getElementById('ft-active-engine');
@@ -159,6 +168,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // genuinely carries traffic, so the badge follows that event, not the tor
   // setting: a tor route that never came up must not claim to be tor.
   let torAddr = '';
+
+  // Same rule for the psiphon carrier: the badge only appears once the engine
+  // reports a live psiphon listener, and drops with the tunnel.
+  let psiphonAddr = '';
 
   function getProtocolDisplayName(proto) {
     switch (proto) {
@@ -231,6 +244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // a fresh process (or tears one down) drops the badge. A reconnect keeps
     // the same process, so it keeps the address.
     if (visualState !== 'connected' && visualState !== 'reconnecting') torAddr = '';
+    if (visualState !== 'connected' && visualState !== 'reconnecting') psiphonAddr = '';
     if (!mainDialBtn || !ringGlow) return;
 
     // Reset base classes
@@ -322,6 +336,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const show = visualState === 'connected' && torAddr !== '';
       dtTorBadge.classList.toggle('hidden', !show);
       if (show) dtTorBadge.title = `tor exit via ${torAddr}`;
+    }
+    if (dtPsiphonBadge) {
+      // Same rule as the tor badge: only a live psiphon listener earns it.
+      const show = visualState === 'connected' && psiphonAddr !== '';
+      dtPsiphonBadge.classList.toggle('hidden', !show);
+      if (show) dtPsiphonBadge.title = `psiphon via ${psiphonAddr}`;
     }
     if (dtCipher) dtCipher.textContent = config.protocol === 'wg' ? 'ChaCha20-Poly1305' : 'AES-128-GCM / ChaCha20';
     if (dtMtu) dtMtu.textContent = config.protocol === 'masque-h2' ? '1500 Bytes' : '1280 Bytes';
@@ -784,6 +804,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     api.saveGuiConfig(config);
   });
 
+  // 6.5 Psiphon Integration Toggle
+  const psiphonSubOptions = document.getElementById('psiphon-sub-options');
+  setupToggleSwitch('toggle-psiphon', config.psiphon_enabled, (checked) => {
+    config.psiphon_enabled = checked;
+    if (psiphonSubOptions) {
+      psiphonSubOptions.style.opacity = checked ? '1' : '0.4';
+      psiphonSubOptions.style.pointerEvents = checked ? 'auto' : 'none';
+    }
+    api.saveGuiConfig(config);
+  });
+
+  // Psiphon Mode Radio group (carry / reach / psiphon-only)
+  document.querySelectorAll('input[name="psiphon-mode"]').forEach((radio) => {
+    radio.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        config.psiphon_mode = e.target.value;
+        api.saveGuiConfig(config);
+      }
+    });
+  });
+
+  // Psiphon tunnel shape dropdown (auto / cdn / direct)
+  setupCustomDropdown('btn-psiphon-shape', 'panel-psiphon-shape', 'label-psiphon-shape', (val) => {
+    config.psiphon_shape = val;
+    syncFormToConfig();
+    api.saveGuiConfig(config);
+  });
+
   // 7. ClientHello Fragmentation Toggle (applies to the MASQUE HTTP/2 carrier)
   setupToggleSwitch('toggle-fragment', config.fragment, (checked) => {
     config.fragment = checked;
@@ -796,6 +844,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     'cfg-upstream', 'cfg-peer', 'cfg-wiw-outer', 'cfg-wiw-inner',
     'cfg-mim-outer', 'cfg-mim-inner', 'cfg-tor-bind',
     'cfg-tor-bridge-lines',
+    'cfg-psiphon-region', 'cfg-psiphon-cdn-ips', 'cfg-psiphon-cdn-sni',
+    'cfg-psiphon-bin', 'cfg-psiphon-http',
     'cfg-fragment-size', 'cfg-fragment-delay', 'cfg-team',
     'auth-email', 'auth-access-token', 'auth-client-id', 'auth-client-secret'
   ].forEach((id) => {
@@ -868,6 +918,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     torAddr = typeof addr === 'string' ? addr.trim() : '';
     // The engine's "tor is ready" line can land just before or just after the
     // connected status, so a live badge is redrawn on either order.
+    if (currentState === 'connected') updateVisualState('connected', currentStatus);
+  });
+
+  await api.onPsiphonAddr((payload) => {
+    const addr = payload && typeof payload === 'object' ? payload.addr : payload;
+    psiphonAddr = typeof addr === 'string' ? addr.trim() : '';
+    // Same ordering tolerance as the tor badge.
     if (currentState === 'connected') updateVisualState('connected', currentStatus);
   });
 
@@ -1031,6 +1088,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     const torBridgeLines = document.getElementById('cfg-tor-bridge-lines');
     if (torBridgeLines) config.tor_bridge_lines = torBridgeLines.value.trim();
 
+    const psRegion = document.getElementById('cfg-psiphon-region');
+    if (psRegion) config.psiphon_region = psRegion.value.trim();
+
+    const psCdnIps = document.getElementById('cfg-psiphon-cdn-ips');
+    if (psCdnIps) config.psiphon_cdn_ips = psCdnIps.value.trim();
+
+    const psCdnSni = document.getElementById('cfg-psiphon-cdn-sni');
+    if (psCdnSni) config.psiphon_cdn_sni = psCdnSni.value.trim();
+
+    const psBin = document.getElementById('cfg-psiphon-bin');
+    if (psBin) config.psiphon_bin = psBin.value.trim();
+
+    const psHttp = document.getElementById('cfg-psiphon-http');
+    if (psHttp) config.psiphon_http = psHttp.value.trim();
+
     const fragSize = document.getElementById('cfg-fragment-size');
     if (fragSize) config.fragment_size = fragSize.value.trim();
     const fragDelay = document.getElementById('cfg-fragment-delay');
@@ -1072,6 +1144,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     setVal('cfg-mim-inner', config.mim_inner || '');
     setVal('cfg-tor-bind', config.tor_bind || '');
     setVal('cfg-tor-bridge-lines', config.tor_bridge_lines || '');
+    setVal('cfg-psiphon-region', config.psiphon_region || '');
+    setVal('cfg-psiphon-cdn-ips', config.psiphon_cdn_ips || '');
+    setVal('cfg-psiphon-cdn-sni', config.psiphon_cdn_sni || '');
+    setVal('cfg-psiphon-bin', config.psiphon_bin || '');
+    setVal('cfg-psiphon-http', config.psiphon_http || '');
     setVal('cfg-fragment-size', config.fragment_size || '16-32');
     setVal('cfg-fragment-delay', config.fragment_delay || '2-10');
     setVal('cfg-team', config.team || '');
@@ -1093,6 +1170,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     syncDropdownTick('panel-proto', config.protocol);
     syncDropdownTick('panel-obfs', config.noize);
     syncDropdownTick('panel-bridge', config.tor_country || 'auto');
+
+    // Psiphon toggle + mode radios + shape dropdown reflect the saved config.
+    if (psiphonSubOptions) {
+      psiphonSubOptions.style.opacity = config.psiphon_enabled ? '1' : '0.4';
+      psiphonSubOptions.style.pointerEvents = config.psiphon_enabled ? 'auto' : 'none';
+    }
+    document.querySelectorAll('input[name="psiphon-mode"]').forEach((radio) => {
+      radio.checked = radio.value === config.psiphon_mode;
+    });
+    // The shape dropdown is a setupCustomDropdown, so the default header label
+    // only reflects the initial "Auto" option; move the tick and label onto the
+    // saved value. (setupToggleSwitch already set the toggle's aria-checked.)
+    syncDropdownTick('panel-psiphon-shape', config.psiphon_shape);
+    const psShapeMatch = document
+      .querySelector('#panel-psiphon-shape [data-value="' + config.psiphon_shape + '"] span');
+    const labelPsShape = document.getElementById('label-psiphon-shape');
+    if (labelPsShape && psShapeMatch) labelPsShape.textContent = psShapeMatch.textContent;
     // Scan buttons
     scanButtons.forEach((b) => {
       if (b.getAttribute('data-scan') === config.scan_mode) {

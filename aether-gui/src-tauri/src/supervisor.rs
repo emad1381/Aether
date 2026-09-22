@@ -88,9 +88,10 @@ impl Supervisor {
             let _ = app.emit("aether-status", st.clone());
         }
 
-        // Auto Mode is deliberately disabled for an explicit Tor configuration.
-        // Tor is an opt-in transport, not a background matrix dimension.
-        if cfg.auto_connect && !cfg.tor_enabled {
+        // Auto Mode is deliberately disabled for an explicit Tor or Psiphon
+        // configuration. Both are opt-in transports, not background matrix
+        // dimensions.
+        if cfg.auto_connect && !cfg.tor_enabled && !cfg.psiphon_enabled {
             return self.run_auto_matrix(&bin_path, &app, cfg).await;
         }
 
@@ -901,6 +902,19 @@ fn parse_tor_addr(line: &str) -> Option<String> {
     Some(addr.to_string())
 }
 
+/// Same protocol as parse_tor_addr for the psiphon carrier:
+/// "[+] psiphon is ready; 127.0.0.1:1821 leaves through psiphon". The
+/// dashboard shows its PSIPHON badge once the engine announces it.
+fn parse_psiphon_addr(line: &str) -> Option<String> {
+    let rest = line.split("psiphon is ready;").nth(1)?;
+    let addr = rest.split_whitespace().next()?;
+    let (host, port) = addr.rsplit_once(':')?;
+    if host.is_empty() || port.parse::<u16>().is_err() {
+        return None;
+    }
+    Some(addr.to_string())
+}
+
 fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto: Option<&str>) {
     let level = if line.contains("ERROR") || line.contains("[-] ") || line.starts_with("error:") {
         "ERROR"
@@ -929,6 +943,10 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto
 
     if let Some(addr) = parse_tor_addr(line) {
         let _ = app.emit("aether-tor-addr", serde_json::json!({ "addr": addr }));
+    }
+
+    if let Some(addr) = parse_psiphon_addr(line) {
+        let _ = app.emit("aether-psiphon-addr", serde_json::json!({ "addr": addr }));
     }
 
     // State machine extraction
@@ -1032,6 +1050,7 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
     let mut args = Vec::new();
 
     let tor_only = cfg.tor_enabled && cfg.tor_mode == "tor-only";
+    let psiphon_only = cfg.psiphon_enabled && cfg.psiphon_mode == "psiphon-only";
 
     // SOCKS5 and optional HTTP proxy
     args.push("--bind".to_string());
@@ -1040,7 +1059,7 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
     // Only pass --http-proxy when the user asked for one. In tor-only mode the
     // --bind listener itself IS the tor exit, so an extra HTTP proxy on the
     // same port would collide with it.
-    if !tor_only {
+    if !tor_only && !psiphon_only {
         if let Some(http) = cfg.http_port {
             args.push("--http-proxy".to_string());
             args.push(format!("127.0.0.1:{http}"));
@@ -1054,7 +1073,7 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
     // the protocol flags go out together with the tor flag — this is what
     // makes tor work on every protocol from the GUI. Tor-only has no tunnel
     // at all, so it gets no protocol flag.
-    if !tor_only {
+    if !tor_only && !psiphon_only {
         match cfg.protocol.as_str() {
             "masque" => {
                 args.push("--masque".to_string());
@@ -1132,6 +1151,58 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
             if !bind.is_empty() {
                 args.push("--tor-bind".to_string());
                 args.push(bind.to_string());
+            }
+        }
+    }
+
+    if cfg.psiphon_enabled {
+        match cfg.psiphon_mode.as_str() {
+            // The engine forces the http/2 carrier itself in reverse mode, so
+            // the GUI keeps the user's protocol choice; a wireguard choice that
+            // cannot cross psiphon is caught and reported by the engine.
+            "reach" => args.push("--psiphon-reverse".to_string()),
+            "psiphon-only" => args.push("--psiphon-only".to_string()),
+            _ => args.push("--psiphon".to_string()),
+        }
+
+        match cfg.psiphon_shape.trim().to_ascii_lowercase().as_str() {
+            "cdn" | "direct" => {
+                args.push("--psiphon-mode".to_string());
+                args.push(cfg.psiphon_shape.trim().to_ascii_lowercase());
+            }
+            _ => {}
+        }
+        if let Some(ref region) = cfg.psiphon_region {
+            let region = region.trim().to_uppercase();
+            if region.len() == 2 && region.chars().all(|c| c.is_ascii_alphabetic()) {
+                args.push("--psiphon-region".to_string());
+                args.push(region);
+            }
+        }
+        if let Some(ref ip) = cfg.psiphon_cdn_ips {
+            if !ip.trim().is_empty() {
+                args.push("--psiphon-cdn-ips".to_string());
+                args.push(ip.trim().to_string());
+            }
+        }
+        if let Some(ref sni) = cfg.psiphon_cdn_sni {
+            if !sni.trim().is_empty() {
+                args.push("--psiphon-cdn-sni".to_string());
+                args.push(sni.trim().to_string());
+            }
+        }
+        if let Some(ref bin) = cfg.psiphon_bin {
+            let bin = bin.trim();
+            if !bin.is_empty() {
+                args.push("--psiphon-bin".to_string());
+                args.push(bin.to_string());
+            }
+        }
+        if let Some(ref http) = cfg.psiphon_http {
+            let http = http.trim();
+            if !http.is_empty() {
+                args.push("--psiphon-http".to_string());
+                args.push(http.to_string());
             }
         }
     }
@@ -1297,5 +1368,88 @@ mod tests {
             None
         );
         assert_eq!(parse_tor_addr("[+] tor is ready; soon"), None);
+    }
+
+    #[test]
+    fn psiphon_mode_flags_map_to_the_engine_spellings() {
+        let cfg = TunnelConfig {
+            psiphon_enabled: true,
+            protocol: "masque".to_string(),
+            ..TunnelConfig::default()
+        };
+        assert!(build_cli_args(&cfg).iter().any(|a| a == "--psiphon"));
+
+        let reach = TunnelConfig {
+            psiphon_enabled: true,
+            psiphon_mode: "reach".to_string(),
+            ..TunnelConfig::default()
+        };
+        assert!(build_cli_args(&reach).iter().any(|a| a == "--psiphon-reverse"));
+
+        let only = TunnelConfig {
+            psiphon_enabled: true,
+            psiphon_mode: "psiphon-only".to_string(),
+            ..TunnelConfig::default()
+        };
+        assert!(build_cli_args(&only).iter().any(|a| a == "--psiphon-only"));
+    }
+
+    #[test]
+    fn psiphon_only_suppresses_the_http_proxy_and_the_tunnel_protocol() {
+        let cfg = TunnelConfig {
+            psiphon_enabled: true,
+            psiphon_mode: "psiphon-only".to_string(),
+            http_port: Some(1820),
+            protocol: "masque".to_string(),
+            ..TunnelConfig::default()
+        };
+        let args = build_cli_args(&cfg);
+        assert!(!args.iter().any(|a| a == "--http-proxy"));
+        assert!(!args.iter().any(|a| a == "--masque"));
+    }
+
+    #[test]
+    fn psiphon_region_shape_and_bin_follow_the_user() {
+        let cfg = TunnelConfig {
+            psiphon_enabled: true,
+            psiphon_mode: "carry".to_string(),
+            psiphon_region: Some("de".to_string()),
+            psiphon_shape: "cdn".to_string(),
+            psiphon_cdn_ips: "1.2.3.4, 5.6.7.8".to_string(),
+            psiphon_cdn_sni: "cdn.example.com".to_string(),
+            psiphon_bin: Some("C:\\tools\\psiphon-tunnel-core.exe".to_string()),
+            psiphon_http: Some("127.0.0.1:1822".to_string()),
+            ..TunnelConfig::default()
+        };
+        let args = build_cli_args(&cfg);
+        assert!(args.iter().any(|a| a == "--psiphon-region"));
+        assert!(args.windows(2).any(|w| w[0] == "--psiphon-region" && w[1] == "DE"));
+        assert!(args.iter().any(|a| a == "--psiphon-mode"));
+        assert!(args.windows(2).any(|w| w[0] == "--psiphon-mode" && w[1] == "cdn"));
+        assert!(args.windows(2).any(|w| w[0] == "--psiphon-cdn-ips" && w[1] == "1.2.3.4, 5.6.7.8"));
+        assert!(args.windows(2).any(|w| w[0] == "--psiphon-cdn-sni" && w[1] == "cdn.example.com"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--psiphon-bin" && w[1] == "C:\\tools\\psiphon-tunnel-core.exe"));
+        assert!(args.windows(2).any(|w| w[0] == "--psiphon-http" && w[1] == "127.0.0.1:1822"));
+    }
+
+    #[test]
+    fn psiphon_addr_comes_only_from_a_live_listener_line() {
+        assert_eq!(
+            parse_psiphon_addr("[+] psiphon is ready; 127.0.0.1:1821 leaves through psiphon"),
+            Some("127.0.0.1:1821".to_string())
+        );
+        assert_eq!(
+            parse_psiphon_addr(
+                "[+] psiphon is ready; 127.0.0.1:1821 leaves through psiphon, carried by the tunnel"
+            ),
+            Some("127.0.0.1:1821".to_string())
+        );
+        assert_eq!(
+            parse_psiphon_addr("[+] tor is ready; 127.0.0.1:1820 leaves through tor"),
+            None
+        );
+        assert_eq!(parse_psiphon_addr("[+] psiphon is ready; soon"), None);
     }
 }

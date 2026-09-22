@@ -133,6 +133,14 @@ export const api = {
     }
   },
 
+  async onPsiphonAddr(callback) {
+    if (hasTauri() && window.__TAURI__.event) {
+      return await window.__TAURI__.event.listen('aether-psiphon-addr', (event) => {
+        callback(event.payload);
+      });
+    }
+  },
+
   async submitOtpCode(code) {
     if (hasTauri()) {
       return await window.__TAURI__.core.invoke('team_otp_submit', { code });
