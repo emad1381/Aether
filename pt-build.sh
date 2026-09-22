@@ -54,5 +54,38 @@ mkdir -p "$out"
         go build -trimpath -ldflags "-s -w" -o "$out/lyrebird$ext" ./cmd/lyrebird
 )
 
+# snowflake-client: the snowflake pluggable transport. Nice to have, not
+# critical: obfs4 and webtunnel ship in lyrebird, so a failed snowflake build
+# only costs one fallback lane, and must never break the release build.
+sf_repo="https://gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/snowflake"
+sf_version="v2.6.1"
+sf_module="gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/snowflake"
+
+sf_work="$(mktemp -d)"
+if git clone --quiet --depth 1 --branch "$sf_version" "$sf_repo" "$sf_work/snowflake" 2>/dev/null; then
+    sf_src="$sf_work/snowflake"
+else
+    curl -fsSL "https://proxy.golang.org/$sf_module/@v/$sf_version.zip" -o "$sf_work/snowflake.zip" 2>/dev/null || true
+    if [ -f "$sf_work/snowflake.zip" ]; then
+        (cd "$sf_work" && unzip -q snowflake.zip)
+        sf_src="$sf_work/$sf_module@$sf_version"
+    fi
+fi
+
+if [ -n "${sf_src:-}" ] && [ -f "$sf_src/client/main.go" ]; then
+    if (
+        cd "$sf_src"
+        GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" CGO_ENABLED=0 \
+            go build -trimpath -ldflags "-s -w" -o "$out/snowflake-client$ext" ./client
+    ); then
+        echo "pt-build: snowflake-client built"
+    else
+        echo "pt-build: snowflake-client failed to build; continuing without it" >&2
+    fi
+else
+    echo "pt-build: snowflake source unavailable; continuing without it" >&2
+fi
+rm -rf "$sf_work"
+
 echo "pt-build: $goos/$goarch ->"
 ls -l "$out"
