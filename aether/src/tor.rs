@@ -589,8 +589,19 @@ mod with_tor {
         };
 
         if !forced {
-            let attempts = if may_fall_back { 1 } else { rounds };
-            let deadline = may_fall_back.then(direct_probe);
+            // When Tor dials through our own tunnel (carry mode), the first
+            // bootstrap has to pull a multi-megabyte consensus over a
+            // high-latency path, and 75s of bare-network budget is far too
+            // little: it just strands the run at 15%. Give it three times the
+            // budget and a stall watchdog so a genuinely dead tunnel still
+            // gets retried instead of hanging forever.
+            let (attempts, deadline, stall) = if through.is_some() {
+                (rounds, Some(direct_probe() * 3), Some(stall_limit()))
+            } else if may_fall_back {
+                (1, Some(direct_probe()), None)
+            } else {
+                (rounds, None, None)
+            };
             let tries = stage(
                 state,
                 through,
@@ -598,7 +609,7 @@ mod with_tor {
                 "reaching the network",
                 attempts,
                 deadline,
-                None,
+                stall,
                 Some("direct"),
             );
             match tries.await {
@@ -759,6 +770,7 @@ mod with_tor {
 
         wait_for_proxy(through).await;
         log::info!("[*] bootstrapping tor through the tunnel at {through}");
+        log::info!("[*] the first bootstrap pulls a few MB of directory through the tunnel and can take a couple of minutes; this is normal");
 
         let client = establish(&state, Some(through), FOREVER).await?;
         log::info!("[+] tor is ready; {listen} leaves through tor, carried by the tunnel");
