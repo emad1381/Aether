@@ -1179,17 +1179,15 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
                 args.push(region);
             }
         }
-        if let Some(ref ip) = cfg.psiphon_cdn_ips {
-            if !ip.trim().is_empty() {
-                args.push("--psiphon-cdn-ips".to_string());
-                args.push(ip.trim().to_string());
-            }
+        let ip = cfg.psiphon_cdn_ips.trim();
+        if !ip.is_empty() {
+            args.push("--psiphon-cdn-ips".to_string());
+            args.push(ip.to_string());
         }
-        if let Some(ref sni) = cfg.psiphon_cdn_sni {
-            if !sni.trim().is_empty() {
-                args.push("--psiphon-cdn-sni".to_string());
-                args.push(sni.trim().to_string());
-            }
+        let sni = cfg.psiphon_cdn_sni.trim();
+        if !sni.is_empty() {
+            args.push("--psiphon-cdn-sni".to_string());
+            args.push(sni.to_string());
         }
         if let Some(ref bin) = cfg.psiphon_bin {
             let bin = bin.trim();
