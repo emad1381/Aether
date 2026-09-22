@@ -84,6 +84,9 @@ pub struct TunnelConfig {
     pub tor_country: Option<String>,
 
     #[serde(default)]
+    pub tor_bridge_lines: Option<String>, // one bridge line per row, e.g. obfs4 146.57.248.225:22 FINGERPRINT cert=... iat-mode=0
+
+    #[serde(default)]
     pub tor_bind: Option<String>, // explicit tor socks listen address, e.g. 127.0.0.1:1821
 
     #[serde(default)]
@@ -181,6 +184,7 @@ impl Default for TunnelConfig {
             tor_mode: default_tor_mode(),
             tor_bridges: false,
             tor_country: None,
+            tor_bridge_lines: None,
             tor_bind: None,
             launch_at_startup: false,
             start_minimized: false,

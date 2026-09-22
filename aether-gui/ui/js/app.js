@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     tor_bridges: false,
     tor_country: 'auto',
     tor_bind: '',
+    tor_bridge_lines: '',
     wiw_outer: '',
     wiw_inner: '',
     mim_outer: '',
@@ -149,9 +150,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const dtSocks = document.getElementById('dt-socks');
   const dtProto = document.getElementById('dt-proto');
   const dtExit = document.getElementById('dt-exit');
+  const dtTorBadge = document.getElementById('dt-tor-badge');
   const dtCipher = document.getElementById('dt-cipher');
   const dtMtu = document.getElementById('dt-mtu');
   const ftActiveEngine = document.getElementById('ft-active-engine');
+
+  // The engine announces the tor listener ("tor is ready") only once it
+  // genuinely carries traffic, so the badge follows that event, not the tor
+  // setting: a tor route that never came up must not claim to be tor.
+  let torAddr = '';
 
   function getProtocolDisplayName(proto) {
     switch (proto) {
@@ -220,6 +227,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   function updateVisualState(visualState, payload = {}) {
     const wasConnected = currentState === 'connected';
     currentState = visualState;
+    // A tor listener only lives inside a running engine: anything that starts
+    // a fresh process (or tears one down) drops the badge. A reconnect keeps
+    // the same process, so it keeps the address.
+    if (visualState !== 'connected' && visualState !== 'reconnecting') torAddr = '';
     if (!mainDialBtn || !ringGlow) return;
 
     // Reset base classes
@@ -306,6 +317,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (dtSocks) dtSocks.textContent = `127.0.0.1:${config.socks_port}`;
     if (dtProto) dtProto.textContent = getProtocolDisplayName(config.protocol);
     if (dtExit) dtExit.textContent = payload.exit_ip ? `${payload.exit_ip} (Anycast)` : '-- (Anycast)';
+    if (dtTorBadge) {
+      // Only a live tor listener earns the badge, and it drops with the tunnel.
+      const show = visualState === 'connected' && torAddr !== '';
+      dtTorBadge.classList.toggle('hidden', !show);
+      if (show) dtTorBadge.title = `tor exit via ${torAddr}`;
+    }
     if (dtCipher) dtCipher.textContent = config.protocol === 'wg' ? 'ChaCha20-Poly1305' : 'AES-128-GCM / ChaCha20';
     if (dtMtu) dtMtu.textContent = config.protocol === 'masque-h2' ? '1500 Bytes' : '1280 Bytes';
     if (ftActiveEngine) {
@@ -778,6 +795,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'cfg-bind', 'cfg-dns', 'cfg-bypass', 'cfg-force', 'cfg-block',
     'cfg-upstream', 'cfg-peer', 'cfg-wiw-outer', 'cfg-wiw-inner',
     'cfg-mim-outer', 'cfg-mim-inner', 'cfg-tor-bind',
+    'cfg-tor-bridge-lines',
     'cfg-fragment-size', 'cfg-fragment-delay', 'cfg-team',
     'auth-email', 'auth-access-token', 'auth-client-id', 'auth-client-secret'
   ].forEach((id) => {
@@ -844,6 +862,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await api.onOtpRequest((payload) => {
     openOtpModal(payload || {});
+  });
+  await api.onTorAddr((payload) => {
+    const addr = payload && typeof payload === 'object' ? payload.addr : payload;
+    torAddr = typeof addr === 'string' ? addr.trim() : '';
+    // The engine's "tor is ready" line can land just before or just after the
+    // connected status, so a live badge is redrawn on either order.
+    if (currentState === 'connected') updateVisualState('connected', currentStatus);
   });
 
   // Check for Updates Modal
@@ -1003,6 +1028,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const torBind = document.getElementById('cfg-tor-bind');
     if (torBind) config.tor_bind = torBind.value.trim();
+    const torBridgeLines = document.getElementById('cfg-tor-bridge-lines');
+    if (torBridgeLines) config.tor_bridge_lines = torBridgeLines.value.trim();
 
     const fragSize = document.getElementById('cfg-fragment-size');
     if (fragSize) config.fragment_size = fragSize.value.trim();
@@ -1044,6 +1071,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setVal('cfg-mim-outer', config.mim_outer || '');
     setVal('cfg-mim-inner', config.mim_inner || '');
     setVal('cfg-tor-bind', config.tor_bind || '');
+    setVal('cfg-tor-bridge-lines', config.tor_bridge_lines || '');
     setVal('cfg-fragment-size', config.fragment_size || '16-32');
     setVal('cfg-fragment-delay', config.fragment_delay || '2-10');
     setVal('cfg-team', config.team || '');

@@ -887,6 +887,20 @@ fn parse_otp_request(line: &str) -> Option<(String, u32)> {
     email.map(|e| (e, attempt))
 }
 
+/// The engine announces the tor listener once it is genuinely carrying
+/// traffic: "[+] tor is ready; 127.0.0.1:1820 leaves through tor, carried by
+/// the tunnel" (the plain forms drop the trailing clause). The dashboard
+/// shows its TOR badge from that moment on.
+fn parse_tor_addr(line: &str) -> Option<String> {
+    let rest = line.split("tor is ready;").nth(1)?;
+    let addr = rest.split_whitespace().next()?;
+    let (host, port) = addr.rsplit_once(':')?;
+    if host.is_empty() || port.parse::<u16>().is_err() {
+        return None;
+    }
+    Some(addr.to_string())
+}
+
 fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto: Option<&str>) {
     let level = if line.contains("ERROR") || line.contains("[-] ") || line.starts_with("error:") {
         "ERROR"
@@ -911,6 +925,10 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto
             serde_json::json!({ "email": email, "attempt": attempt }),
         );
         return;
+    }
+
+    if let Some(addr) = parse_tor_addr(line) {
+        let _ = app.emit("aether-tor-addr", serde_json::json!({ "addr": addr }));
     }
 
     // State machine extraction
@@ -994,6 +1012,20 @@ fn find_aether_binary() -> Result<PathBuf, String> {
     }
 
     Err("Could not find 'aether.exe'. Please ensure aether.exe is located in the same folder as aether-gui.exe.".to_string())
+}
+
+/// The bridge lines typed into the GUI, one per row. The engine splits
+/// AETHER_TOR_BRIDGES on newlines and semicolons (see tor::bridges), so the
+/// same split happens here and each line goes out as its own --tor-bridge.
+fn manual_bridge_lines(cfg: &TunnelConfig) -> Vec<String> {
+    cfg.tor_bridge_lines
+        .as_deref()
+        .unwrap_or_default()
+        .split(['\n', ';'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
@@ -1081,8 +1113,19 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
             "tor-only" => args.push("--tor-only".to_string()),
             _ => args.push("--tor".to_string()),
         }
-        if cfg.tor_bridges {
-            args.push("--tor-bridges".to_string());
+        // Hand-typed bridge lines win over the automatic bridgedb fetch: the
+        // engine reads them from AETHER_TOR_BRIDGES, and --tor-bridges would
+        // overwrite them with "auto".
+        let manual = manual_bridge_lines(cfg);
+        if manual.is_empty() {
+            if cfg.tor_bridges {
+                args.push("--tor-bridges".to_string());
+            }
+        } else {
+            for line in manual {
+                args.push("--tor-bridge".to_string());
+                args.push(line);
+            }
         }
         if let Some(ref bind) = cfg.tor_bind {
             let bind = bind.trim();
@@ -1175,4 +1218,84 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
     }
 
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg_with_bridges(lines: Option<&str>, bridges: bool) -> TunnelConfig {
+        TunnelConfig {
+            tor_enabled: true,
+            tor_bridges: bridges,
+            tor_bridge_lines: lines.map(str::to_string),
+            ..TunnelConfig::default()
+        }
+    }
+
+    fn bridge_args(cfg: &TunnelConfig) -> Vec<String> {
+        let args = build_cli_args(cfg);
+        let mut values = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            if arg.as_str() == "--tor-bridge" {
+                if let Some(value) = iter.next() {
+                    values.push(value.clone());
+                }
+            }
+        }
+        values
+    }
+
+    #[test]
+    fn manual_bridge_lines_split_like_the_engine_does() {
+        let cfg = cfg_with_bridges(
+            Some(
+                "obfs4 192.0.2.55:38114 316E64 cert=abc iat-mode=0 \n\n; webtunnel 10.0.0.1:443 ABCD url=https://example.org/abc\n",
+            ),
+            false,
+        );
+        let lines = manual_bridge_lines(&cfg);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("obfs4 192.0.2.55"));
+        assert!(lines[1].starts_with("webtunnel 10.0.0.1"));
+        assert_eq!(bridge_args(&cfg).len(), 2);
+    }
+
+    #[test]
+    fn manual_lines_replace_the_automatic_fetch_flag() {
+        let cfg = cfg_with_bridges(Some("obfs4 192.0.2.55:38114 316E64 cert=abc"), true);
+        let args = build_cli_args(&cfg);
+        assert!(!args.iter().any(|arg| arg.as_str() == "--tor-bridges"));
+        assert_eq!(bridge_args(&cfg).len(), 1);
+    }
+
+    #[test]
+    fn the_automatic_fetch_flag_survives_when_nothing_is_typed() {
+        let cfg = cfg_with_bridges(None, true);
+        assert!(build_cli_args(&cfg).iter().any(|arg| arg.as_str() == "--tor-bridges"));
+
+        let blank = cfg_with_bridges(Some("   \n ;  "), true);
+        assert!(manual_bridge_lines(&blank).is_empty());
+        assert!(build_cli_args(&blank).iter().any(|arg| arg.as_str() == "--tor-bridges"));
+    }
+
+    #[test]
+    fn tor_addr_comes_only_from_a_live_listener_line() {
+        assert_eq!(
+            parse_tor_addr(
+                "[+] tor is ready; 127.0.0.1:1820 leaves through tor, carried by the tunnel"
+            ),
+            Some("127.0.0.1:1820".to_string())
+        );
+        assert_eq!(
+            parse_tor_addr("[+] tor is ready; 127.0.0.1:1820 leaves through tor"),
+            Some("127.0.0.1:1820".to_string())
+        );
+        assert_eq!(
+            parse_tor_addr("[*] bootstrapping tor through the tunnel at 127.0.0.1:1819"),
+            None
+        );
+        assert_eq!(parse_tor_addr("[+] tor is ready; soon"), None);
+    }
 }

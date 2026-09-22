@@ -181,6 +181,7 @@
               <div class="flex items-center justify-between py-1">
                 <span class="text-[12px] text-outline">Public Egress IP</span>
                 <span id="dt-exit" class="text-[12px] text-on-surface font-mono">-- <span class="text-outline text-[10px]">(Anycast)</span></span>
+                <span id="dt-tor-badge" class="ml-1.5 text-[10px] font-mono text-[#2dd4bf] bg-[#2dd4bf]/15 px-1.5 py-0.5 rounded font-medium hidden">TOR</span>
               </div>
               <div class="h-px w-full bg-[#222227] my-1"></div>
               <div class="flex items-center justify-between py-1">
@@ -703,6 +704,17 @@
               </div>
             </div>
 
+
+            <!-- Tor bridge lines (manual) -->
+            <div class="flex flex-col md:flex-row md:items-start justify-between py-3 border-b border-[#222227] gap-3">
+              <div class="flex flex-col pr-4 max-w-md pt-0.5">
+                <label class="text-[13px] font-medium text-on-surface" for="cfg-tor-bridge-lines">Tor bridge lines (manual)</label>
+                <span class="text-[12px] text-on-surface-variant">One bridge line per row, e.g. obfs4 146.57.248.225:22 FINGERPRINT cert=... iat-mode=0</span>
+              </div>
+              <div class="w-full md:w-80">
+                <textarea id="cfg-tor-bridge-lines" rows="4" class="w-full bg-[#18181c] border border-[#2d2d35] px-3 py-1.5 rounded-lg text-[12px] font-mono text-on-surface outline-none focus:border-[#f2711c]/60 resize-none leading-relaxed" placeholder="obfs4 146.57.248.225:22 FINGERPRINT cert=... iat-mode=0" spellcheck="false"></textarea>
+              </div>
+            </div>
 
             <!-- ROUTING SECTION -->
             <div class="flex flex-col">
