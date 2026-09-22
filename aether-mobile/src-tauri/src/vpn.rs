@@ -127,7 +127,7 @@ pub extern "system" fn Java_com_aether_mobile_AetherVpn_nativeOnTunReady(
 }
 
 /// Outcome codes from the Kotlin side: 0 ok, 1 consent refused, 2 establish
-/// failed, 3 service stopped.
+/// failed, 3 service stopped, 4 the consent dialog could not be requested.
 #[no_mangle]
 pub extern "system" fn Java_com_aether_mobile_AetherVpn_nativeReport(
     _env: *mut std::ffi::c_void,
@@ -143,6 +143,7 @@ pub extern "system" fn Java_com_aether_mobile_AetherVpn_nativeReport(
             relay::cancel();
             set_state("off", "stopped");
         }
+        4 => set_state("error", "the VPN permission dialog could not be requested"),
         other => set_state("error", format!("the VPN bridge reported code {other}")),
     }
 }

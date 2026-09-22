@@ -21,6 +21,7 @@ PERMISSIONS = [
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.FOREGROUND_SERVICE",
     "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+    "android.permission.FOREGROUND_SERVICE_VPN",
     "android.permission.POST_NOTIFICATIONS",
 ]
 
@@ -29,7 +30,7 @@ COMPONENTS = """
         <service
             android:name="{package}.AetherVpnService"
             android:exported="false"
-            android:foregroundServiceType="specialUse"
+            android:foregroundServiceType="specialUse|vpn"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
