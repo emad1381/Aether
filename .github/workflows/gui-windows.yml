@@ -12,6 +12,7 @@ on:
       - "aether/**"
       - "aether-gui/**"
       - "pt-build.sh"
+      - "psiphon-build.sh"
       - ".github/workflows/gui-windows.yml"
 
 permissions:
@@ -63,6 +64,10 @@ jobs:
         shell: bash
         run: bash ../pt-build.sh windows amd64 "$PWD/pt"
 
+      - name: Build psiphon
+        shell: bash
+        run: bash ../psiphon-build.sh windows amd64 "$PWD/pt"
+
       - name: Build core engine (aether.exe)
         run: cargo build --release --features tor --target x86_64-pc-windows-msvc
 
@@ -77,9 +82,10 @@ jobs:
         run: |
           Copy-Item -Recurse -Force pt target/x86_64-pc-windows-msvc/release/pt
           Copy-Item "$env:GITHUB_WORKSPACE/aether-gui/src-tauri/target/x86_64-pc-windows-msvc/release/aether-gui.exe" target/x86_64-pc-windows-msvc/release/
+          if (!(Test-Path target/x86_64-pc-windows-msvc/release/pt/psiphon-tunnel-core.exe)) { throw "psiphon-tunnel-core.exe was not produced in pt" }
+          if (!(Test-Path target/x86_64-pc-windows-msvc/release/aether-gui.exe)) { throw "aether-gui.exe was not produced" }
           Compress-Archive -Path target/x86_64-pc-windows-msvc/release/aether-gui.exe,target/x86_64-pc-windows-msvc/release/aether.exe,target/x86_64-pc-windows-msvc/release/pt,run-aether.bat -DestinationPath aether-windows-x86_64-gui.zip
           Get-ChildItem aether-windows-x86_64-gui.zip
-          if (!(Test-Path target/x86_64-pc-windows-msvc/release/aether-gui.exe)) { throw "aether-gui.exe was not produced" }
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

@@ -894,25 +894,30 @@ fn parse_otp_request(line: &str) -> Option<(String, u32)> {
 /// shows its TOR badge from that moment on.
 fn parse_tor_addr(line: &str) -> Option<String> {
     let rest = line.split("tor is ready;").nth(1)?;
-    let addr = rest.split_whitespace().next()?;
-    let (host, port) = addr.rsplit_once(':')?;
-    if host.is_empty() || port.parse::<u16>().is_err() {
-        return None;
+    for word in rest.split_whitespace() {
+        if let Some((host, port)) = word.rsplit_once(':') {
+            if !host.is_empty() && port.parse::<u16>().is_ok() {
+                return Some(word.to_string());
+            }
+        }
     }
-    Some(addr.to_string())
+    None
 }
 
 /// Same protocol as parse_tor_addr for the psiphon carrier:
-/// "[+] psiphon is ready; 127.0.0.1:1821 leaves through psiphon". The
+/// "[+] psiphon is ready; 127.0.0.1:1821 leaves through psiphon" or
+/// "[+] psiphon is ready; the tunnel goes out through 127.0.0.1:1821". The
 /// dashboard shows its PSIPHON badge once the engine announces it.
 fn parse_psiphon_addr(line: &str) -> Option<String> {
     let rest = line.split("psiphon is ready;").nth(1)?;
-    let addr = rest.split_whitespace().next()?;
-    let (host, port) = addr.rsplit_once(':')?;
-    if host.is_empty() || port.parse::<u16>().is_err() {
-        return None;
+    for word in rest.split_whitespace() {
+        if let Some((host, port)) = word.rsplit_once(':') {
+            if !host.is_empty() && port.parse::<u16>().is_ok() {
+                return Some(word.to_string());
+            }
+        }
     }
-    Some(addr.to_string())
+    None
 }
 
 fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto: Option<&str>) {
@@ -1362,6 +1367,12 @@ mod tests {
             Some("127.0.0.1:1820".to_string())
         );
         assert_eq!(
+            parse_tor_addr(
+                "[+] tor is ready; the tunnel goes out through 127.0.0.1:1820"
+            ),
+            Some("127.0.0.1:1820".to_string())
+        );
+        assert_eq!(
             parse_tor_addr("[*] bootstrapping tor through the tunnel at 127.0.0.1:1819"),
             None
         );
@@ -1441,6 +1452,12 @@ mod tests {
         assert_eq!(
             parse_psiphon_addr(
                 "[+] psiphon is ready; 127.0.0.1:1821 leaves through psiphon, carried by the tunnel"
+            ),
+            Some("127.0.0.1:1821".to_string())
+        );
+        assert_eq!(
+            parse_psiphon_addr(
+                "[+] psiphon is ready; the tunnel goes out through 127.0.0.1:1821"
             ),
             Some("127.0.0.1:1821".to_string())
         );

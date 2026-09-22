@@ -183,6 +183,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'tor': return 'Tor (Inside WARP)';
       case 'tor-reverse': return 'Tor (Tunnel through Tor)';
       case 'tor-only': return 'Tor Only';
+      case 'psiphon': return 'Psiphon (Inside WARP)';
+      case 'psiphon-reverse': return 'Psiphon (Tunnel through Psiphon)';
+      case 'psiphon-only': return 'Psiphon Only';
       default: return proto.toUpperCase();
     }
   }
@@ -329,7 +332,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Update details drawer
     if (dtSocks) dtSocks.textContent = `127.0.0.1:${config.socks_port}`;
-    if (dtProto) dtProto.textContent = getProtocolDisplayName(config.protocol);
+    if (dtProto) {
+      if (config.psiphon_enabled && config.psiphon_mode === 'psiphon-only') {
+        dtProto.textContent = getProtocolDisplayName('psiphon-only');
+      } else if (config.tor_enabled && config.tor_mode === 'tor-only') {
+        dtProto.textContent = getProtocolDisplayName('tor-only');
+      } else {
+        dtProto.textContent = getProtocolDisplayName(config.protocol);
+      }
+    }
     if (dtExit) dtExit.textContent = payload.exit_ip ? `${payload.exit_ip} (Anycast)` : '-- (Anycast)';
     if (dtTorBadge) {
       // Only a live tor listener earns the badge, and it drops with the tunnel.
@@ -346,7 +357,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (dtCipher) dtCipher.textContent = config.protocol === 'wg' ? 'ChaCha20-Poly1305' : 'AES-128-GCM / ChaCha20';
     if (dtMtu) dtMtu.textContent = config.protocol === 'masque-h2' ? '1500 Bytes' : '1280 Bytes';
     if (ftActiveEngine) {
-      ftActiveEngine.textContent = `${config.protocol.toUpperCase()} · ${config.scan_mode.toUpperCase()} Scan`;
+      if (config.psiphon_enabled && config.psiphon_mode === 'psiphon-only') {
+        ftActiveEngine.textContent = 'PSIPHON ONLY · Standalone';
+      } else if (config.tor_enabled && config.tor_mode === 'tor-only') {
+        ftActiveEngine.textContent = 'TOR ONLY · Standalone';
+      } else {
+        ftActiveEngine.textContent = `${config.protocol.toUpperCase()} · ${config.scan_mode.toUpperCase()} Scan`;
+      }
     }
   }
 
@@ -682,36 +699,38 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Interactive Switch Helper
+  function updateToggleUI(btnId, checked) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.setAttribute('aria-checked', String(checked));
+    const thumb = btn.firstElementChild;
+    if (checked) {
+      btn.classList.remove('bg-[#222228]', 'justify-start');
+      btn.classList.add('bg-[#f2711c]', 'justify-end');
+      if (thumb) {
+        thumb.classList.remove('bg-[#393944]');
+        thumb.classList.add('bg-[#0d0d0f]');
+      }
+    } else {
+      btn.classList.remove('bg-[#f2711c]', 'justify-end');
+      btn.classList.add('bg-[#222228]', 'justify-start');
+      if (thumb) {
+        thumb.classList.remove('bg-[#0d0d0f]');
+        thumb.classList.add('bg-[#393944]');
+      }
+    }
+  }
+
   function setupToggleSwitch(btnId, initialChecked, onToggle) {
     const btn = document.getElementById(btnId);
     if (!btn) return;
 
-    function applyState(checked) {
-      btn.setAttribute('aria-checked', String(checked));
-      const thumb = btn.firstElementChild;
-      if (checked) {
-        btn.classList.remove('bg-[#222228]', 'justify-start');
-        btn.classList.add('bg-[#f2711c]', 'justify-end');
-        if (thumb) {
-          thumb.classList.remove('bg-[#393944]');
-          thumb.classList.add('bg-[#0d0d0f]');
-        }
-      } else {
-        btn.classList.remove('bg-[#f2711c]', 'justify-end');
-        btn.classList.add('bg-[#222228]', 'justify-start');
-        if (thumb) {
-          thumb.classList.remove('bg-[#0d0d0f]');
-          thumb.classList.add('bg-[#393944]');
-        }
-      }
-    }
-
-    applyState(initialChecked);
+    updateToggleUI(btnId, initialChecked);
 
     btn.addEventListener('click', () => {
       const cur = btn.getAttribute('aria-checked') === 'true';
       const next = !cur;
-      applyState(next);
+      updateToggleUI(btnId, next);
       if (onToggle) onToggle(next);
     });
   }
@@ -1020,6 +1039,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       tor_bridges: false,
       tor_country: 'auto',
       tor_bind: '',
+      psiphon_enabled: false,
+      psiphon_mode: 'carry',
+      psiphon_region: '',
+      psiphon_shape: 'auto',
+      psiphon_cdn_ips: '',
+      psiphon_cdn_sni: '',
+      psiphon_bin: '',
+      psiphon_http: '',
       wiw_outer: '',
       wiw_inner: '',
       mim_outer: '',
@@ -1170,6 +1197,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     syncDropdownTick('panel-proto', config.protocol);
     syncDropdownTick('panel-obfs', config.noize);
     syncDropdownTick('panel-bridge', config.tor_country || 'auto');
+
+    // Sync all toggle switch visual states
+    updateToggleUI('toggle-psiphon', !!config.psiphon_enabled);
+    updateToggleUI('toggle-tor', !!config.tor_enabled);
+    updateToggleUI('toggle-tor-bridges', !!config.tor_bridges);
+    updateToggleUI('toggle-fragment', !!config.fragment);
+    updateToggleUI('toggle-sysproxy', config.auto_system_proxy !== false);
+    updateToggleUI('toggle-startup', !!config.launch_at_startup);
+    updateToggleUI('toggle-minimized', !!config.start_minimized);
+    updateToggleUI('toggle-closetray', config.close_to_tray !== false);
+    updateToggleUI('toggle-auto-connect', config.auto_connect !== false);
+
+    if (torSubOptions) {
+      torSubOptions.style.opacity = config.tor_enabled ? '1' : '0.35';
+      torSubOptions.style.pointerEvents = config.tor_enabled ? 'auto' : 'none';
+    }
+    if (bridgeRegionRow) {
+      bridgeRegionRow.style.opacity = config.tor_bridges ? '1' : '0.5';
+      bridgeRegionRow.style.pointerEvents = config.tor_bridges ? 'auto' : 'none';
+    }
 
     // Psiphon toggle + mode radios + shape dropdown reflect the saved config.
     if (psiphonSubOptions) {
