@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8765", "--directory", "aether-mobile/ui"],
       "port": 8765
+    },
+    {
+      "name": "aether-gui-ui",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8766", "--directory", "aether-gui/ui"],
+      "port": 8766
     }
   ]
 }

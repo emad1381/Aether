@@ -181,6 +181,10 @@ const CDNS: &[Cdn] = &[
 /// Stride: test 1 IP every N in each CIDR. Keeps the total probes ~800-1000.
 const STRIDE: usize = 64;
 
+/// Hard cap of probes per CDN. Without it a single /10 would eat the whole
+/// budget inside its first prefix and the other CDNs would never be probed.
+const PER_CDN_BUDGET: usize = 250;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CdnEdge {
     pub ip: String,
@@ -260,35 +264,48 @@ fn build_probes() -> Vec<Probe> {
     let mut seen = std::collections::HashSet::new();
 
     for cdn in CDNS {
+        // Walk each CDN's whole prefix space as one virtual address range and
+        // sample it evenly: one stride computed from its total size. A linear
+        // walk with a fixed stride would fill the cap inside the first /14 and
+        // never reach the rest of that CDN, let alone the other three.
+        let mut ranges: Vec<(u32, u32)> = Vec::with_capacity(cdn.cidrs.len());
+        let mut hosts: u64 = 0;
         for cidr_str in cdn.cidrs {
             let cidr: Ipv4Net = cidr_str.parse().expect("valid CIDR");
             let start = u32::from(cidr.network());
             let end = u32::from(cidr.broadcast());
-            let mut ip = start;
+            hosts += u64::from(end - start) + 1;
+            ranges.push((start, end));
+        }
 
+        let stride = (hosts / PER_CDN_BUDGET as u64).max(STRIDE as u64);
+        let mut index: u64 = 0;
+        let mut added = 0usize;
+
+        'walk: for (start, end) in ranges {
+            let mut ip = start;
             while ip <= end {
-                if ip % STRIDE as u32 == 0 {
+                if index % stride == 0 && added < PER_CDN_BUDGET {
                     let addr = Ipv4Addr::from(ip);
-                    if !seen.contains(&addr) {
-                        seen.insert(addr);
+                    if seen.insert(addr) {
                         probes.push(Probe {
                             addr: SocketAddr::new(IpAddr::V4(addr), 443),
                             cdn: cdn.name,
                             sni: cdn.sni,
                         });
+                        added += 1;
+                    }
+                    if added >= PER_CDN_BUDGET {
+                        break 'walk;
                     }
                 }
-                ip = ip.saturating_add(1);
+                index += 1;
+                ip = ip.wrapping_add(1);
             }
         }
     }
 
-    // Cap at a reasonable number so the scan finishes in ~20s even on slow lines.
-    if probes.len() > 1200 {
-        probes.truncate(1200);
-    }
-
-    log::info!("[cdnscan] built {} probes across 4 CDNs (stride {})", probes.len(), STRIDE);
+    log::info!("[cdnscan] built {} probes across {} CDNs", probes.len(), CDNS.len());
     probes
 }
 

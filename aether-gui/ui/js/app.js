@@ -825,18 +825,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.setAttribute('aria-checked', String(checked));
     const thumb = btn.firstElementChild;
     if (checked) {
-      btn.classList.remove('bg-[#222228]', 'justify-start');
+      btn.classList.remove('bg-[#2e2e38]', 'justify-start');
       btn.classList.add('bg-[#f2711c]', 'justify-end');
       if (thumb) {
-        thumb.classList.remove('bg-[#393944]');
+        thumb.classList.remove('bg-[#6f6f7d]');
         thumb.classList.add('bg-[#0d0d0f]');
       }
     } else {
       btn.classList.remove('bg-[#f2711c]', 'justify-end');
-      btn.classList.add('bg-[#222228]', 'justify-start');
+      btn.classList.add('bg-[#2e2e38]', 'justify-start');
       if (thumb) {
         thumb.classList.remove('bg-[#0d0d0f]');
-        thumb.classList.add('bg-[#393944]');
+        thumb.classList.add('bg-[#6f6f7d]');
       }
     }
   }
