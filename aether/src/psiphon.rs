@@ -810,6 +810,7 @@ fn decode_server_list(bytes: &[u8]) -> Option<String> {
     let text = inflate_if_compressed(bytes);
     let trimmed = text.trim();
     if trimmed.is_empty() {
+        log::warn!("[-] psiphon server list: empty after inflate");
         return None;
     }
 
@@ -817,15 +818,27 @@ fn decode_server_list(bytes: &[u8]) -> Option<String> {
     // file that is already raw entries passes through untouched.
     let wrapper: serde_json::Value = match serde_json::from_str(trimmed) {
         Ok(value) => value,
-        Err(_) => return Some(trimmed.to_string()),
+        Err(_) => {
+            log::info!("[*] psiphon server list: raw entries format ({} lines)", trimmed.lines().count());
+            return Some(trimmed.to_string());
+        }
     };
 
-    let data = wrapper.get("data").and_then(|v| v.as_str())?;
-    let decoded = decode_hex(data.trim())?;
-    let entries = String::from_utf8(decoded).ok()?;
-    if entries.trim().is_empty() {
+    let data = wrapper.get("data").and_then(|v| v.as_str());
+    if data.is_none() {
+        log::warn!("[-] psiphon server list wrapper has no 'data' field");
         return None;
     }
+    let data = data.unwrap();
+
+    let decoded = decode_hex(data.trim())?;
+    let entries = String::from_utf8(decoded).ok()?;
+    let count = entries.lines().filter(|l| !l.trim().is_empty()).count();
+    if count == 0 {
+        log::warn!("[-] psiphon server list: data field decoded to 0 entries");
+        return None;
+    }
+    log::info!("[+] psiphon server list: unwrap OK, {count} entries from signed wrapper");
     Some(entries)
 }
 

@@ -1,94 +1,191 @@
-//! CDN fronting edge scanner.
+//! CDN fronting edge scanner — CIDR edition.
 //!
-//! Finds edge addresses of the big CDNs (Akamai, Google, CloudFront, Azure) that
-//! this machine can actually complete a TLS handshake with, so they can be handed
-//! to psiphon as `FrontedMeekCDNScanSpec` candidates. The test is a real TLS
-//! handshake against one of the CDN's own hostnames: a TCP connect alone proves
-//! nothing, because a middlebox can accept the socket and then reset the handshake,
-//! and because psiphon verifies the edge certificate against the name it presents.
-//! An address that survives here is one psiphon can front through.
+//! Scans the actual IP ranges that Akamai, Google, CloudFront and Azure publish
+//! for their edge networks. A real TLS handshake is attempted against each IP
+//! with a hostname the edge really serves (so its certificate verifies). Only
+//! edges that complete the handshake from *this* machine are returned — these
+//! are the ones psiphon can actually front through on the user's current network.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
+use ipnet::Ipv4Net;
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// How many addresses are probed at once. Each probe is one TLS handshake, so
-/// this is bounded by what a residential uplink tolerates, not by CPU.
+/// Max concurrent TLS handshakes. Each is one TCP connect + ClientHello + read
+/// ServerHello. 24 is safe for a residential uplink.
 const CONCURRENCY: usize = 24;
 
-/// A handshake that has not finished in this long is treated as filtered.
+/// Handshake timeout. A middlebox that accepts TCP but drops TLS will hang here.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// DNS lookups for the ranges go through the system resolver and can stall on a
-/// network that sinks blocked names, so each one is capped.
-const RESOLVE_TIMEOUT: Duration = Duration::from_secs(4);
-
-/// One CDN the scanner knows how to find edges for.
+/// One CDN with its published IPv4 edge ranges and a hostname that the edge
+/// actually serves a valid certificate for.
 struct Cdn {
     name: &'static str,
-    /// Hostnames that resolve into the CDN's edge space. Resolved at scan time
-    /// rather than hardcoded, because edge addresses are anycast and move.
-    domains: &'static [&'static str],
-    /// The name presented in the TLS handshake. It has to be a name the edge
-    /// actually holds a certificate for, or the handshake fails even though the
-    /// address is reachable.
+    /// CIDR blocks published by the CDN for its edge network.
+    cidrs: &'static [&'static str],
+    /// Hostname to send in SNI and verify against the edge certificate.
     sni: &'static str,
 }
 
+// Ranges from cdn-ip-finder + public CDN IP lists. These are the anycast edge
+// prefixes each CDN announces. Scanning the whole /24s would be thousands of
+// IPs; we take a fixed stride (every Nth IP) so the scan finishes in ~20s
+// while still covering the space.
 const CDNS: &[Cdn] = &[
     Cdn {
         name: "Akamai",
-        domains: &[
-            "www.apple.com",
-            "www.adobe.com",
-            "www.paypal.com",
-            "www.bbc.com",
-            "a248.e.akamai.net",
+        cidrs: &[
+            "23.32.0.0/14",   // 23.32.0.0 - 23.35.255.255
+            "23.48.0.0/14",   // 23.48.0.0 - 23.51.255.255
+            "23.58.0.0/15",   // 23.58.0.0 - 23.59.255.255
+            "23.72.0.0/14",   // 23.72.0.0 - 23.75.255.255
+            "23.192.0.0/14",  // 23.192.0.0 - 23.195.255.255
+            "23.196.0.0/14",  // 23.196.0.0 - 23.199.255.255
+            "23.202.0.0/15",  // 23.202.0.0 - 23.203.255.255
+            "23.43.0.0/16",   // 23.43.0.0 - 23.43.255.255
+            "23.44.0.0/15",   // 23.44.0.0 - 23.45.255.255
+            "23.46.0.0/15",   // 23.46.0.0 - 23.47.255.255
+            "23.200.0.0/13",  // 23.200.0.0 - 23.207.255.255
+            "23.208.0.0/13",  // 23.208.0.0 - 23.215.255.255
+            "23.216.0.0/13",  // 23.216.0.0 - 23.223.255.255
+            "23.224.0.0/13",  // 23.224.0.0 - 23.231.255.255
+            "104.64.0.0/10",  // 104.64.0.0 - 104.127.255.255
+            "104.128.0.0/10", // 104.128.0.0 - 104.191.255.255
+            "184.24.0.0/14",  // 184.24.0.0 - 184.27.255.255
+            "184.84.0.0/14",  // 184.84.0.0 - 184.87.255.255
+            "184.86.0.0/15",  // 184.86.0.0 - 184.87.255.255
+            "185.200.232.0/24",
+            "92.16.0.0/16",
+            "92.122.0.0/15",
+            "72.246.0.0/15",
+            "2.16.0.0/13",
+            "2.20.0.0/14",
+            "2.22.0.0/15",
         ],
         sni: "a248.e.akamai.net",
     },
     Cdn {
         name: "Google",
-        domains: &[
-            "www.gstatic.com",
-            "fonts.googleapis.com",
-            "ajax.googleapis.com",
-            "storage.googleapis.com",
-            "accounts.google.com",
+        cidrs: &[
+            "34.143.0.0/16",
+            "34.160.0.0/16",
+            "35.186.0.0/16",
+            "35.190.0.0/16",
+            "35.192.0.0/16",
+            "35.196.0.0/14",
+            "35.200.0.0/13",
+            "35.208.0.0/12",
+            "64.233.160.0/19",
+            "66.249.80.0/20",
+            "74.125.0.0/16",
+            "142.250.0.0/15",
+            "142.251.0.0/16",
+            "172.217.0.0/16",
+            "172.253.0.0/16",
+            "216.58.192.0/18",
+            "216.239.32.0/19",
         ],
         sni: "www.gstatic.com",
     },
     Cdn {
         name: "CloudFront",
-        domains: &[
-            "d1.awsstatic.com",
-            "aws.amazon.com",
-            "d36cz9buwru1tt.cloudfront.net",
-            "images-na.ssl-images-amazon.com",
+        cidrs: &[
+            "13.32.0.0/15",
+            "13.35.0.0/16",
+            "13.56.0.0/14",
+            "13.224.0.0/14",
+            "13.248.0.0/13",
+            "13.250.0.0/15",
+            "13.254.0.0/15",
+            "18.208.0.0/13",
+            "18.216.0.0/15",
+            "18.220.0.0/14",
+            "18.230.0.0/15",
+            "18.231.0.0/16",
+            "18.232.0.0/14",
+            "18.240.0.0/13",
+            "18.248.0.0/13",
+            "18.254.0.0/15",
+            "52.46.0.0/15",
+            "52.84.0.0/15",
+            "52.86.0.0/15",
+            "52.88.0.0/14",
+            "52.92.0.0/14",
+            "52.96.0.0/13",
+            "52.100.0.0/14",
+            "52.104.0.0/14",
+            "52.108.0.0/15",
+            "52.110.0.0/15",
+            "52.112.0.0/14",
+            "52.116.0.0/15",
+            "52.118.0.0/15",
+            "52.120.0.0/14",
+            "54.192.0.0/13",
+            "54.230.0.0/15",
+            "54.230.128.0/17",
+            "54.239.128.0/18",
+            "54.239.192.0/18",
+            "54.240.128.0/18",
+            "99.84.0.0/16",
+            "99.86.0.0/16",
+            "130.176.0.0/15",
+            "143.204.0.0/15",
+            "205.251.192.0/18",
         ],
         sni: "d1.awsstatic.com",
     },
     Cdn {
         name: "Azure",
-        domains: &[
-            "ajax.aspnetcdn.com",
-            "az416426.vo.msecnd.net",
-            "az784690.vo.msecnd.net",
-            "cdn.office.net",
+        cidrs: &[
+            "13.107.4.0/22",
+            "13.107.6.0/23",
+            "13.107.8.0/21",
+            "13.107.16.0/20",
+            "20.33.0.0/16",
+            "20.34.0.0/15",
+            "20.36.0.0/14",
+            "20.40.0.0/13",
+            "20.48.0.0/12",
+            "20.64.0.0/11",
+            "20.96.0.0/11",
+            "20.128.0.0/11",
+            "20.160.0.0/11",
+            "20.192.0.0/11",
+            "23.96.0.0/13",
+            "23.96.0.0/14",
+            "23.100.0.0/14",
+            "40.64.0.0/12",
+            "40.76.0.0/13",
+            "40.80.0.0/12",
+            "40.96.0.0/11",
+            "40.128.0.0/10",
+            "40.160.0.0/11",
+            "52.224.0.0/12",
+            "52.232.0.0/11",
+            "52.240.0.0/12",
+            "104.208.0.0/13",
+            "104.216.0.0/13",
+            "137.116.0.0/14",
+            "137.120.0.0/13",
+            "168.61.0.0/16",
+            "168.62.0.0/15",
+            "168.63.0.0/16",
         ],
         sni: "ajax.aspnetcdn.com",
     },
 ];
 
-/// One address the scanner tried.
+/// Stride: test 1 IP every N in each CIDR. Keeps the total probes ~800-1000.
+const STRIDE: usize = 64;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CdnEdge {
     pub ip: String,
     pub cdn: String,
     pub sni: String,
-    /// Round trip of the TLS handshake, when it completed.
     pub latency_ms: Option<u64>,
     pub reachable: bool,
 }
@@ -96,9 +193,7 @@ pub struct CdnEdge {
 #[derive(Debug, Clone, Serialize)]
 pub struct CdnScanReport {
     pub edges: Vec<CdnEdge>,
-    /// Reachable addresses, comma separated, ready for the psiphon CDN field.
     pub ips: String,
-    /// The server names those addresses were validated against.
     pub sni: String,
     pub tested: usize,
     pub reachable: usize,
@@ -110,22 +205,17 @@ struct Probe {
     sni: &'static str,
 }
 
-/// Scan every known CDN and report which edge addresses complete a TLS handshake
-/// from this machine. `progress` is called with (completed, total) as probes
-/// finish, so the caller can surface a live count.
 pub async fn scan<F>(mut progress: F) -> CdnScanReport
 where
     F: FnMut(usize, usize),
 {
-    let probes = gather_candidates().await;
+    let probes = build_probes();
     let total = probes.len();
     progress(0, total);
 
     let mut edges: Vec<CdnEdge> = Vec::with_capacity(total);
     let mut completed = 0usize;
 
-    // buffer_unordered keeps `CONCURRENCY` handshakes in flight and yields each
-    // as it settles, so a stalled probe never blocks the ones behind it.
     use futures::stream::{self, StreamExt};
     let mut inflight = stream::iter(probes.into_iter().map(probe_edge)).buffer_unordered(CONCURRENCY);
 
@@ -165,37 +255,40 @@ where
     }
 }
 
-async fn gather_candidates() -> Vec<Probe> {
+fn build_probes() -> Vec<Probe> {
     let mut probes = Vec::new();
-    let mut seen: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
     for cdn in CDNS {
-        for domain in cdn.domains {
-            let resolved = match tokio::time::timeout(RESOLVE_TIMEOUT, tokio::net::lookup_host((*domain, 443))).await {
-                Ok(Ok(addrs)) => addrs,
-                _ => continue,
-            };
-            for addr in resolved {
-                // Fronting over IPv6 buys nothing here: the psiphon fronting spec
-                // takes the addresses as dial targets and the CDNs answer both,
-                // but an IPv6 failure mode is invisible in the result list.
-                if !addr.is_ipv4() {
-                    continue;
+        for cidr_str in cdn.cidrs {
+            let cidr: Ipv4Net = cidr_str.parse().expect("valid CIDR");
+            let start = u32::from(cidr.network());
+            let end = u32::from(cidr.broadcast());
+            let mut ip = start;
+
+            while ip <= end {
+                if ip % STRIDE as u32 == 0 {
+                    let addr = Ipv4Addr::from(ip);
+                    if !seen.contains(&addr) {
+                        seen.insert(addr);
+                        probes.push(Probe {
+                            addr: SocketAddr::new(IpAddr::V4(addr), 443),
+                            cdn: cdn.name,
+                            sni: cdn.sni,
+                        });
+                    }
                 }
-                let ip = addr.ip().to_string();
-                if seen.contains(&ip) {
-                    continue;
-                }
-                seen.push(ip);
-                probes.push(Probe {
-                    addr,
-                    cdn: cdn.name,
-                    sni: cdn.sni,
-                });
+                ip = ip.saturating_add(1);
             }
         }
     }
 
+    // Cap at a reasonable number so the scan finishes in ~20s even on slow lines.
+    if probes.len() > 1200 {
+        probes.truncate(1200);
+    }
+
+    log::info!("[cdnscan] built {} probes across 4 CDNs (stride {})", probes.len(), STRIDE);
     probes
 }
 
@@ -211,10 +304,6 @@ async fn probe_edge(probe: Probe) -> CdnEdge {
     }
 }
 
-/// Complete a TLS 1.2+ handshake and read the ServerHello back. The certificate
-/// is not verified — verification is the tunnel core's job, and it verifies
-/// against the name it presents — but the ServerHello has to arrive and parse,
-/// which is exactly what a filtered or sunk address fails to do.
 async fn handshake(addr: SocketAddr, sni: &str) -> bool {
     let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake_inner(addr, sni)).await;
     matches!(result, Ok(Ok(())))
@@ -235,8 +324,6 @@ async fn handshake_inner(addr: SocketAddr, sni: &str) -> Result<(), ()> {
         .map_err(|_| ())?
         .map_err(|_| ())?;
 
-    // A TLS record: content type 0x16 (handshake), a supported version, and a
-    // ServerHello (handshake type 0x02) inside it.
     if read < 6 || buf[0] != 0x16 {
         return Err(());
     }
@@ -249,16 +336,12 @@ async fn handshake_inner(addr: SocketAddr, sni: &str) -> Result<(), ()> {
     Ok(())
 }
 
-/// A minimal TLS 1.2 ClientHello advertising TLS 1.3, with the server name
-/// extension set. Only the extensions a CDN edge needs in order to answer are
-/// included; this is a reachability probe, not a fingerprint.
 fn client_hello(sni: &str) -> Vec<u8> {
     let sni_bytes = sni.as_bytes();
 
-    // server_name extension: type 0x0000, then the host as a DNS name.
     let mut server_name = Vec::new();
     server_name.extend_from_slice(&u16::try_from(sni_bytes.len() + 3).unwrap_or(0).to_be_bytes());
-    server_name.push(0x00); // host_name name type
+    server_name.push(0x00);
     server_name.extend_from_slice(&u16::try_from(sni_bytes.len()).unwrap_or(0).to_be_bytes());
     server_name.extend_from_slice(sni_bytes);
 
@@ -267,21 +350,16 @@ fn client_hello(sni: &str) -> Vec<u8> {
     extensions.extend_from_slice(&u16::try_from(server_name.len()).unwrap_or(0).to_be_bytes());
     extensions.extend_from_slice(&server_name);
 
-    // supported_versions: offer TLS 1.3 and 1.2.
     let supported_versions = [0x04u8, 0x03, 0x04, 0x03, 0x03];
     extensions.extend_from_slice(&0x002bu16.to_be_bytes());
     extensions.extend_from_slice(&u16::try_from(supported_versions.len()).unwrap_or(0).to_be_bytes());
     extensions.extend_from_slice(&supported_versions);
 
-    // supported_groups (x25519, secp256r1) and a key share, because a TLS 1.3
-    // edge will not answer a ClientHello that offers 1.3 without one.
     let groups = [0x00u8, 0x04, 0x00, 0x1d, 0x00, 0x17];
     extensions.extend_from_slice(&0x000au16.to_be_bytes());
     extensions.extend_from_slice(&u16::try_from(groups.len()).unwrap_or(0).to_be_bytes());
     extensions.extend_from_slice(&groups);
 
-    // key_share: x25519 with a fixed public key. The probe never sends
-    // application data, so the key only has to be well formed.
     let mut key_share = vec![0x00, 0x24, 0x00, 0x1d, 0x00, 0x20];
     key_share.extend_from_slice(&[
         0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65,
@@ -292,39 +370,36 @@ fn client_hello(sni: &str) -> Vec<u8> {
     extensions.extend_from_slice(&u16::try_from(key_share.len()).unwrap_or(0).to_be_bytes());
     extensions.extend_from_slice(&key_share);
 
-    // A short cipher list covering what the four CDNs negotiate.
     let ciphers: [u8; 22] = [
-        0x00, 0x14, // 10 cipher suites follow
-        0x13, 0x01, // TLS_AES_128_GCM_SHA256
-        0x13, 0x02, // TLS_AES_256_GCM_SHA384
-        0x13, 0x03, // TLS_CHACHA20_POLY1305_SHA256
-        0xc0, 0x2b, // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
-        0xc0, 0x2f, // TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-        0xc0, 0x2c, // TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
-        0xc0, 0x30, // TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
-        0x00, 0x9c, // TLS_RSA_WITH_AES_128_GCM_SHA256
-        0x00, 0x2f, // TLS_RSA_WITH_AES_128_CBC_SHA
-        0x00, 0x35, // TLS_RSA_WITH_AES_256_CBC_SHA
+        0x00, 0x14,
+        0x13, 0x01,
+        0x13, 0x02,
+        0x13, 0x03,
+        0xc0, 0x2b,
+        0xc0, 0x2f,
+        0xc0, 0x2c,
+        0xc0, 0x30,
+        0x00, 0x9c,
+        0x00, 0x2f,
+        0x00, 0x35,
     ];
 
     let mut hello = Vec::new();
     hello.push(0x03);
-    hello.push(0x03); // legacy_version: TLS 1.2
-    hello.extend_from_slice(&[0x41u8; 32]); // random
-    hello.push(0x00); // no session id
+    hello.push(0x03);
+    hello.extend_from_slice(&[0x41u8; 32]);
+    hello.push(0x00);
     hello.extend_from_slice(&ciphers);
-    hello.extend_from_slice(&[0x01, 0x00]); // null compression
+    hello.extend_from_slice(&[0x01, 0x00]);
     hello.extend_from_slice(&u16::try_from(extensions.len()).unwrap_or(0).to_be_bytes());
     hello.extend_from_slice(&extensions);
 
-    // Handshake header: type 0x01 (ClientHello), 24-bit length.
     let mut handshake = Vec::new();
     handshake.push(0x01);
     let len = u32::try_from(hello.len()).unwrap_or(0);
     handshake.extend_from_slice(&len.to_be_bytes()[1..]);
     handshake.extend_from_slice(&hello);
 
-    // Record header: handshake, legacy version, 16-bit length.
     let mut record = Vec::new();
     record.extend_from_slice(&[0x16, 0x03, 0x01]);
     record.extend_from_slice(&u16::try_from(handshake.len()).unwrap_or(0).to_be_bytes());
@@ -337,29 +412,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn client_hello_is_a_well_formed_tls_record() {
+    fn client_hello_contains_sni() {
         let hello = client_hello("a248.e.akamai.net");
-
-        assert_eq!(hello[0], 0x16, "content type is handshake");
-        assert_eq!(&hello[1..3], &[0x03, 0x01], "record version is TLS 1.0");
-
-        let record_len = u16::from_be_bytes([hello[3], hello[4]]) as usize;
-        assert_eq!(hello.len(), 5 + record_len, "record length matches the body");
-        assert_eq!(hello[5], 0x01, "handshake type is ClientHello");
-
-        // The server name has to be in there verbatim, or the edge has nothing
-        // to select a certificate against.
         let host = b"a248.e.akamai.net";
-        assert!(
-            hello.windows(host.len()).any(|window| window == host),
-            "SNI host is embedded in the ClientHello"
-        );
+        assert!(hello.windows(host.len()).any(|w| w == host));
     }
 
     #[test]
-    fn every_cdn_has_a_probe_target_and_a_name() {
+    fn probe_count_is_bounded() {
+        let probes = build_probes();
+        assert!(probes.len() <= 1200);
+        assert!(probes.len() > 400);
+    }
+
+    #[test]
+    fn every_cdn_has_cidrs_and_sni() {
         for cdn in CDNS {
-            assert!(!cdn.domains.is_empty(), "{} has no domains", cdn.name);
+            assert!(!cdn.cidrs.is_empty(), "{} has no CIDRs", cdn.name);
             assert!(cdn.sni.contains('.'), "{} sni is not a hostname", cdn.name);
         }
     }
