@@ -573,17 +573,6 @@ fn build_config(
         "DataRootDirectory".into(),
         serde_json::Value::from(state.to_string_lossy().to_string()),
     );
-
-    // The bundled server list is what lets psiphon come up on a network that
-    // blocks the S3 distribution channel, which is the whole point of shipping
-    // one. It has to be the raw server entries, not the signed compressed
-    // wrapper the distribution channel serves; see server_entries().
-    if let Some(entries) = server_entries(state) {
-        map.insert(
-            "EmbeddedServerEntries".into(),
-            serde_json::Value::from(entries),
-        );
-    }
     map.insert(
         "LocalSocksProxyPort".into(),
         serde_json::Value::from(socks.port()),
@@ -718,30 +707,33 @@ fn note(kind: &str, data: &serde_json::Value) {
     }
 }
 
-/// The raw server entries psiphon can import, read from the bundled server list
-/// that ships beside the identity file.
+/// Materialize the bundled server list into hex server-entry lines and return a
+/// path psiphon can be started with `-serverList` on.
 ///
 /// The Psiphon distribution channel serves `server_list_compressed`: a zlib
-/// stream of a signed JSON object whose `data` field is hex-encoded server
-/// entries separated by newlines. That wrapper is what `remote_server_list`
-/// downloads are verified against, but it is not what the tunnel core imports —
-/// `psiphon-tunnel-core -serverList` and the `EmbeddedServerEntries` config key
-/// both want the raw entries, and feeding them the wrapper fails with
-/// `encoding/hex: invalid byte: U+0078 'x'`, which leaves the client with zero
-/// servers and unable to connect on any network that also blocks the download.
-/// This unwraps whichever of the two forms it finds, so a list dropped in by
-/// hand and the one the release archive seeds both work.
-fn server_entries(state: &Path) -> Option<String> {
+/// stream of a signed JSON object whose `data` field is newline-separated hex
+/// server entries. That wrapper is not what the tunnel core imports — feeding it
+/// the wrapper fails with `encoding/hex: invalid byte: U+0078 'x'` and the client
+/// is left with zero servers, unable to connect on any network that also blocks
+/// the S3 download. The `data` lines themselves are exactly what `-serverList`
+/// wants (verified: 428 entries import), so whichever form the file arrives in,
+/// the lines are unwrapped here and written into the state directory for the
+/// child process. Decoding the hex into plaintext would be wrong: it fuses the
+/// lines together and psiphon then sees one giant malformed entry.
+fn server_list_file(state: &Path) -> Option<PathBuf> {
     let path = server_list_path(state)?;
     let bytes = std::fs::read(&path).ok()?;
     let entries = decode_server_list(&bytes)?;
+
+    let out = state.join("server-entries.txt");
+    std::fs::write(&out, &entries).ok()?;
 
     let count = entries.lines().filter(|line| !line.trim().is_empty()).count();
     log::info!(
         "[+] psiphon bundled server list: {count} entries from {}",
         path.display()
     );
-    Some(entries)
+    Some(out)
 }
 
 #[cfg(test)]
@@ -749,15 +741,19 @@ mod server_list_tests {
     use super::decode_server_list;
 
     #[test]
-    fn compressed_signed_wrapper_unwraps_to_its_entries() {
+    fn compressed_signed_wrapper_keeps_its_hex_lines_separate() {
         // The distribution channel serves exactly this shape: a zlib stream of a
-        // signed JSON object whose `data` is hex-encoded server entries split by
-        // newlines. psiphon-tunnel-core rejects the wrapper with
-        // `encoding/hex: invalid byte: U+0078 'x'`, so the unwrap has to yield the
-        // entries and nothing else.
-        let entries = "30203020302030207b226970223a22312e322e332e34227d0a30203020302030207b226970223a22352e362e372e38227d";
+        // signed JSON object whose `data` is newline-separated hex entries. The
+        // lines are what `-serverList` imports (428 of them in the real file).
+        // Decoding the hex or stripping its newlines fuses every entry into one
+        // line, which the parser then rejects as a single malformed entry — the
+        // exact "1 entries" failure this must not regress to.
+        let line_one = "30203020302030207b7d";
+        let line_two = "30203020302030207b7d";
+        let data = format!("{line_one}\n{line_two}\n{line_one}");
         let wrapper = format!(
-            "{{\"data\":\"{entries}\",\"signature\":\"AAAA\",\"signingPublicKeyDigest\":\"BBBB\"}}"
+            "{{\"data\":{},\"signature\":\"AAAA\",\"signingPublicKeyDigest\":\"BBBB\"}}",
+            serde_json::to_string(&data).unwrap()
         );
 
         let mut compressed = Vec::new();
@@ -770,8 +766,8 @@ mod server_list_tests {
         assert_eq!(compressed[0], 0x78, "the channel compresses with a zlib header");
 
         let decoded = decode_server_list(&compressed).expect("wrapper should decode");
-        assert!(decoded.starts_with("0 0 0 0 {"), "entries come out hex-decoded");
-        assert_eq!(decoded.lines().count(), 2);
+        assert_eq!(decoded, data, "hex lines pass through verbatim");
+        assert_eq!(decoded.lines().count(), 3, "lines stay separate");
         assert!(!decoded.contains("signingPublicKeyDigest"));
     }
 
@@ -779,7 +775,7 @@ mod server_list_tests {
     fn raw_entries_pass_through_unchanged() {
         let raw = b"30203020302030207b7d\n30203020302030207b7d\n";
         let decoded = decode_server_list(raw).expect("raw entries should decode");
-        assert_eq!(decoded, "0 0 0 0 {}\n0 0 0 0 {}");
+        assert_eq!(decoded, "30203020302030207b7d\n30203020302030207b7d");
     }
 
     #[test]
@@ -819,27 +815,29 @@ fn decode_server_list(bytes: &[u8]) -> Option<String> {
     let wrapper: serde_json::Value = match serde_json::from_str(trimmed) {
         Ok(value) => value,
         Err(_) => {
-            log::info!("[*] psiphon server list: raw entries format ({} lines)", trimmed.lines().count());
+            let count = trimmed.lines().filter(|l| !l.trim().is_empty()).count();
+            log::info!("[*] psiphon server list: raw entries format ({count} lines)");
             return Some(trimmed.to_string());
         }
     };
 
-    let data = wrapper.get("data").and_then(|v| v.as_str());
-    if data.is_none() {
+    let Some(data) = wrapper.get("data").and_then(|v| v.as_str()) else {
         log::warn!("[-] psiphon server list wrapper has no 'data' field");
         return None;
-    }
-    let data = data.unwrap();
+    };
 
-    let decoded = decode_hex(data.trim())?;
-    let entries = String::from_utf8(decoded).ok()?;
-    let count = entries.lines().filter(|l| !l.trim().is_empty()).count();
+    // The data field is already the newline-separated hex lines `-serverList`
+    // consumes. It must not be hex-decoded into plaintext: the newlines are
+    // separators between hex lines, not encoded data, and stripping them fuses
+    // all 428 entries into one line the parser rejects.
+    let entries = data.trim();
+    let count = entries.lines().filter(|line| !line.trim().is_empty()).count();
     if count == 0 {
-        log::warn!("[-] psiphon server list: data field decoded to 0 entries");
+        log::warn!("[-] psiphon server list: wrapper 'data' field is empty");
         return None;
     }
     log::info!("[+] psiphon server list: unwrap OK, {count} entries from signed wrapper");
-    Some(entries)
+    Some(entries.to_string())
 }
 
 fn inflate_if_compressed(bytes: &[u8]) -> String {
@@ -853,21 +851,6 @@ fn inflate_if_compressed(bytes: &[u8]) -> String {
         }
     }
     String::from_utf8_lossy(bytes).into_owned()
-}
-
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(text.len() / 2);
-    let mut chars = text.chars().filter(|c| !c.is_ascii_whitespace());
-    while let Some(high) = chars.next() {
-        let low = chars.next()?;
-        let byte = (hex_value(high)? << 4) | hex_value(low)?;
-        out.push(byte);
-    }
-    Some(out)
-}
-
-fn hex_value(c: char) -> Option<u8> {
-    c.to_digit(16).map(|d| d as u8)
 }
 
 fn expected_without_inproxy(text: &str) -> bool {
@@ -902,11 +885,19 @@ pub async fn start(
 
     log::info!("[*] starting psiphon from {}", exe.display());
 
-    let mut child = Command::new(&exe)
+    let mut command = Command::new(&exe);
+    command
         .arg("-config")
         .arg(&config_path)
         .arg("-dataRootDirectory")
-        .arg(state)
+        .arg(state);
+    // Ship the server list in through the flag that is known to import it, so
+    // psiphon comes up with real servers even when the S3 distribution channel
+    // is blocked and it can never refresh the list itself.
+    if let Some(list) = server_list_file(state) {
+        command.arg("-serverList").arg(list);
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
