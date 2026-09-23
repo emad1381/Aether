@@ -280,9 +280,68 @@ fn cdn_candidates(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// The server names the in-app CDN scanner validates edges against, and the
+/// names psiphon presents to those edges when the user has not typed their own.
+/// Every one of these is a hostname that is actually served from the matching
+/// CDN's edge network, which is what makes the fronting connection's TLS
+/// certificate verify; a guessed name (www.akamai.com, d1.cloudfront.net) is
+/// rejected by the edge with a certificate mismatch and the tunnel never comes
+/// up.
+pub const CDN_FRONTING_SNI: &[(&str, &[&str])] = &[
+    (
+        "Akamai",
+        &[
+            "a248.e.akamai.net",
+            "a77.net.akamai.net",
+            "a104.net.akamai.net",
+            "a184.net.akamai.net",
+            "ds-aksb.akamaized.net",
+            "ak.net.akamaized.net",
+        ],
+    ),
+    (
+        "Google",
+        &[
+            "fonts.googleapis.com",
+            "ajax.googleapis.com",
+            "storage.googleapis.com",
+            "www.gstatic.com",
+            "ssl.gstatic.com",
+            "accounts.google.com",
+        ],
+    ),
+    (
+        "CloudFront",
+        &[
+            "d1.awsstatic.com",
+            "aws.amazon.com",
+            "images-na.ssl-images-amazon.com",
+            "d36cz9buwru1tt.cloudfront.net",
+        ],
+    ),
+    (
+        "Azure",
+        &[
+            "ajax.aspnetcdn.com",
+            "az416426.vo.msecnd.net",
+            "az784690.vo.msecnd.net",
+            "cdn.office.net",
+            "static.azureedge.net",
+        ],
+    ),
+];
+
+/// Every fronting server name, in the order the scanner presents them.
+pub fn cdn_fronting_sni() -> Vec<&'static str> {
+    CDN_FRONTING_SNI
+        .iter()
+        .flat_map(|(_, names)| names.iter().copied())
+        .collect()
+}
+
 fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
     let addresses = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_IPS").unwrap_or_default());
-    let names = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_SNI").unwrap_or_default());
+    let mut names = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_SNI").unwrap_or_default());
 
     if addresses.is_empty() {
         map.insert(
@@ -290,6 +349,19 @@ fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
             serde_json::Value::from(true),
         );
         return;
+    }
+
+    // Edges without names to present are unusable: the fronted-meek handshake
+    // verifies the edge certificate against the name it sent, and psiphon's own
+    // fallback names are not served by every CDN, so a certificate mismatch
+    // silently burns the whole candidate. When the user (or the scanner) gave
+    // edges but no names, offer every known fronting name and let the scan keep
+    // the pair that verifies.
+    if names.is_empty() {
+        names = cdn_fronting_sni()
+            .into_iter()
+            .map(str::to_string)
+            .collect();
     }
 
     let mut spec = serde_json::Map::new();
@@ -501,6 +573,17 @@ fn build_config(
         "DataRootDirectory".into(),
         serde_json::Value::from(state.to_string_lossy().to_string()),
     );
+
+    // The bundled server list is what lets psiphon come up on a network that
+    // blocks the S3 distribution channel, which is the whole point of shipping
+    // one. It has to be the raw server entries, not the signed compressed
+    // wrapper the distribution channel serves; see server_entries().
+    if let Some(entries) = server_entries(state) {
+        map.insert(
+            "EmbeddedServerEntries".into(),
+            serde_json::Value::from(entries),
+        );
+    }
     map.insert(
         "LocalSocksProxyPort".into(),
         serde_json::Value::from(socks.port()),
@@ -633,6 +716,145 @@ fn note(kind: &str, data: &serde_json::Value) {
         }
         _ => log::debug!("[psiphon] {kind} {data}"),
     }
+}
+
+/// The raw server entries psiphon can import, read from the bundled server list
+/// that ships beside the identity file.
+///
+/// The Psiphon distribution channel serves `server_list_compressed`: a zlib
+/// stream of a signed JSON object whose `data` field is hex-encoded server
+/// entries separated by newlines. That wrapper is what `remote_server_list`
+/// downloads are verified against, but it is not what the tunnel core imports —
+/// `psiphon-tunnel-core -serverList` and the `EmbeddedServerEntries` config key
+/// both want the raw entries, and feeding them the wrapper fails with
+/// `encoding/hex: invalid byte: U+0078 'x'`, which leaves the client with zero
+/// servers and unable to connect on any network that also blocks the download.
+/// This unwraps whichever of the two forms it finds, so a list dropped in by
+/// hand and the one the release archive seeds both work.
+fn server_entries(state: &Path) -> Option<String> {
+    let path = server_list_path(state)?;
+    let bytes = std::fs::read(&path).ok()?;
+    let entries = decode_server_list(&bytes)?;
+
+    let count = entries.lines().filter(|line| !line.trim().is_empty()).count();
+    log::info!(
+        "[+] psiphon bundled server list: {count} entries from {}",
+        path.display()
+    );
+    Some(entries)
+}
+
+#[cfg(test)]
+mod server_list_tests {
+    use super::decode_server_list;
+
+    #[test]
+    fn compressed_signed_wrapper_unwraps_to_its_entries() {
+        // The distribution channel serves exactly this shape: a zlib stream of a
+        // signed JSON object whose `data` is hex-encoded server entries split by
+        // newlines. psiphon-tunnel-core rejects the wrapper with
+        // `encoding/hex: invalid byte: U+0078 'x'`, so the unwrap has to yield the
+        // entries and nothing else.
+        let entries = "30203020302030207b226970223a22312e322e332e34227d0a30203020302030207b226970223a22352e362e372e38227d";
+        let wrapper = format!(
+            "{{\"data\":\"{entries}\",\"signature\":\"AAAA\",\"signingPublicKeyDigest\":\"BBBB\"}}"
+        );
+
+        let mut compressed = Vec::new();
+        {
+            let mut encoder =
+                flate2::write::ZlibEncoder::new(&mut compressed, flate2::Compression::default());
+            std::io::Write::write_all(&mut encoder, wrapper.as_bytes()).unwrap();
+            encoder.finish().unwrap();
+        }
+        assert_eq!(compressed[0], 0x78, "the channel compresses with a zlib header");
+
+        let decoded = decode_server_list(&compressed).expect("wrapper should decode");
+        assert!(decoded.starts_with("0 0 0 0 {"), "entries come out hex-decoded");
+        assert_eq!(decoded.lines().count(), 2);
+        assert!(!decoded.contains("signingPublicKeyDigest"));
+    }
+
+    #[test]
+    fn raw_entries_pass_through_unchanged() {
+        let raw = b"30203020302030207b7d\n30203020302030207b7d\n";
+        let decoded = decode_server_list(raw).expect("raw entries should decode");
+        assert_eq!(decoded, "0 0 0 0 {}\n0 0 0 0 {}");
+    }
+
+    #[test]
+    fn wrapper_without_a_data_field_is_rejected() {
+        let wrapper = br#"{"signature":"AAAA"}"#;
+        assert!(decode_server_list(wrapper).is_none());
+    }
+}
+
+fn server_list_path(state: &Path) -> Option<PathBuf> {
+    let given = std::env::var("AETHER_PSIPHON_SERVER_LIST_FILE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+
+    let bundled = state
+        .join("ca.psiphon.PsiphonTunnel.tunnel-core")
+        .join("remote_server_list");
+
+    [given, Some(bundled)]
+        .into_iter()
+        .flatten()
+        .find(|path| path.is_file())
+}
+
+fn decode_server_list(bytes: &[u8]) -> Option<String> {
+    let text = inflate_if_compressed(bytes);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // The signed wrapper is one JSON object; the raw entries are hex lines. A
+    // file that is already raw entries passes through untouched.
+    let wrapper: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(value) => value,
+        Err(_) => return Some(trimmed.to_string()),
+    };
+
+    let data = wrapper.get("data").and_then(|v| v.as_str())?;
+    let decoded = decode_hex(data.trim())?;
+    let entries = String::from_utf8(decoded).ok()?;
+    if entries.trim().is_empty() {
+        return None;
+    }
+    Some(entries)
+}
+
+fn inflate_if_compressed(bytes: &[u8]) -> String {
+    // 0x78 0x9C is the zlib header the distribution channel compresses with.
+    if bytes.len() > 2 && bytes[0] == 0x78 && bytes[1] == 0x9c {
+        let mut decoder = flate2::read::ZlibDecoder::new(bytes);
+        let mut inflated = String::new();
+        if std::io::Read::read_to_string(&mut decoder, &mut inflated).is_ok() && !inflated.is_empty()
+        {
+            return inflated;
+        }
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn decode_hex(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() / 2);
+    let mut chars = text.chars().filter(|c| !c.is_ascii_whitespace());
+    while let Some(high) = chars.next() {
+        let low = chars.next()?;
+        let byte = (hex_value(high)? << 4) | hex_value(low)?;
+        out.push(byte);
+    }
+    Some(out)
+}
+
+fn hex_value(c: char) -> Option<u8> {
+    c.to_digit(16).map(|d| d as u8)
 }
 
 fn expected_without_inproxy(text: &str) -> bool {

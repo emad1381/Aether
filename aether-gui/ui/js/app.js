@@ -104,12 +104,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const navBtns = {
     'proxy-control': document.getElementById('nav-proxy'),
     'network-console': document.getElementById('nav-console'),
+    'cdn-scanner': document.getElementById('nav-cdn'),
     'node-settings': document.getElementById('nav-settings')
   };
 
   const views = {
     'proxy-control': document.getElementById('view-proxy'),
     'network-console': document.getElementById('view-console'),
+    'cdn-scanner': document.getElementById('view-cdn'),
     'node-settings': document.getElementById('view-settings')
   };
 
@@ -137,6 +139,110 @@ document.addEventListener('DOMContentLoaded', async () => {
       btn.addEventListener('click', () => switchView(key));
     }
   });
+
+  // -------------------------------------------------------------------------
+  // 3b. CDN FRONTING SCANNER
+  // -------------------------------------------------------------------------
+  const cdnScanBtn = document.getElementById('btn-cdn-scan');
+  const cdnApplyBtn = document.getElementById('btn-cdn-apply');
+  const cdnStatus = document.getElementById('cdn-scan-status');
+  const cdnCount = document.getElementById('cdn-scan-count');
+  const cdnBarWrap = document.getElementById('cdn-scan-bar-wrap');
+  const cdnBar = document.getElementById('cdn-scan-bar');
+  const cdnEmpty = document.getElementById('cdn-scan-empty');
+  const cdnTable = document.getElementById('cdn-scan-table');
+  const cdnBody = document.getElementById('cdn-scan-body');
+  let cdnReport = null;
+
+  if (typeof api.onCdnScan === 'function') {
+    api.onCdnScan((payload) => {
+      const done = Number(payload.done) || 0;
+      const total = Number(payload.total) || 0;
+      if (cdnStatus) cdnStatus.textContent = total ? `testing ${done}/${total}` : 'resolving edges...';
+      if (cdnBarWrap) cdnBarWrap.classList.remove('hidden');
+      if (cdnBar) cdnBar.style.width = total ? `${Math.round((done / total) * 100)}%` : '0%';
+    });
+  }
+
+  function renderCdnReport(report) {
+    cdnReport = report;
+    const edges = Array.isArray(report.edges) ? report.edges : [];
+    if (cdnCount) cdnCount.textContent = `${report.reachable}/${report.tested} reachable`;
+    if (cdnEmpty) cdnEmpty.classList.toggle('hidden', edges.length > 0);
+    if (cdnTable) cdnTable.classList.toggle('hidden', edges.length === 0);
+    if (cdnApplyBtn) cdnApplyBtn.classList.toggle('hidden', !report.ips);
+    if (!cdnBody) return;
+    cdnBody.innerHTML = '';
+    edges.forEach((edge) => {
+      const row = document.createElement('tr');
+      row.className = 'border-b border-[#222227]';
+      const handshake = edge.reachable
+        ? `${edge.latency_ms} ms`
+        : 'filtered';
+      const tone = edge.reachable ? 'text-[#2dd4bf]' : 'text-outline';
+      [edge.ip, edge.cdn, edge.sni].forEach((value) => {
+        const cell = document.createElement('td');
+        cell.className = 'py-1.5 pr-3 text-on-surface';
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+      const cell = document.createElement('td');
+      cell.className = `py-1.5 pr-3 ${tone}`;
+      cell.textContent = handshake;
+      row.appendChild(cell);
+      cdnBody.appendChild(row);
+    });
+  }
+
+  if (cdnScanBtn) {
+    cdnScanBtn.addEventListener('click', async () => {
+      cdnScanBtn.disabled = true;
+      if (cdnStatus) cdnStatus.textContent = 'resolving edges...';
+      if (cdnBarWrap) cdnBarWrap.classList.remove('hidden');
+      if (cdnBar) cdnBar.style.width = '0%';
+      try {
+        const report = await api.scanCdnEdges();
+        renderCdnReport(report);
+        if (cdnStatus) {
+          cdnStatus.textContent = report.reachable
+            ? `${report.reachable} edges answered`
+            : 'no edge answered — the CDN networks look blocked here';
+        }
+      } catch (err) {
+        if (cdnStatus) cdnStatus.textContent = `scan failed: ${err}`;
+      } finally {
+        cdnScanBtn.disabled = false;
+        if (cdnBarWrap) cdnBarWrap.classList.add('hidden');
+      }
+    });
+  }
+
+  if (cdnApplyBtn) {
+    cdnApplyBtn.addEventListener('click', async () => {
+      if (!cdnReport || !cdnReport.ips) return;
+      config.psiphon_cdn_ips = cdnReport.ips;
+      config.psiphon_cdn_sni = cdnReport.sni || '';
+      // Edges without the fronting shape are never consulted, so applying a
+      // scan result also switches psiphon to CDN fronting.
+      if (config.psiphon_shape !== 'cdn') {
+        config.psiphon_shape = 'cdn';
+      }
+      const ipsInput = document.getElementById('cfg-psiphon-cdn-ips');
+      if (ipsInput) ipsInput.value = config.psiphon_cdn_ips;
+      const sniInput = document.getElementById('cfg-psiphon-cdn-sni');
+      if (sniInput) sniInput.value = config.psiphon_cdn_sni;
+      syncDropdownTick('panel-psiphon-shape', 'cdn');
+      const cdnLabel = document.querySelector('#panel-psiphon-shape [data-value="cdn"] span');
+      const labelPsShape = document.getElementById('label-psiphon-shape');
+      if (labelPsShape && cdnLabel) labelPsShape.textContent = cdnLabel.textContent;
+      try {
+        await api.saveGuiConfig(config);
+        if (cdnStatus) cdnStatus.textContent = 'saved — Psiphon shape set to CDN';
+      } catch (err) {
+        if (cdnStatus) cdnStatus.textContent = `could not save: ${err}`;
+      }
+    });
+  }
 
   const ftEditSettings = document.getElementById('ft-edit-settings');
   if (ftEditSettings) {

@@ -133,6 +133,21 @@ export const api = {
     }
   },
 
+  async scanCdnEdges() {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('scan_cdn_edges');
+    }
+    return { edges: [], ips: '', sni: '', tested: 0, reachable: 0 };
+  },
+
+  async onCdnScan(callback) {
+    if (hasTauri() && window.__TAURI__.event) {
+      return await window.__TAURI__.event.listen('aether-cdn-scan', (event) => {
+        callback(event.payload);
+      });
+    }
+  },
+
   async onPsiphonAddr(callback) {
     if (hasTauri() && window.__TAURI__.event) {
       return await window.__TAURI__.event.listen('aether-psiphon-addr', (event) => {

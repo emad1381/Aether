@@ -95,15 +95,37 @@ jobs:
               Write-Warning "Could not provision initial identities: $_"
           }
 
-          # Seed initial Psiphon server list directly from Psiphon distribution channel
+          # Seed initial Psiphon server list directly from Psiphon distribution channel.
+          # The channel serves a zlib compressed signed JSON wrapper, but the tunnel
+          # core only imports the raw hex server entries inside it, so unwrap it here
+          # and ship the entries. Aether also unwraps the compressed form at runtime,
+          # so either layout connects.
           Write-Host "Seeding initial Psiphon server list..."
           $psiDir = "aether.toml-psiphon/ca.psiphon.PsiphonTunnel.tunnel-core"
           New-Item -ItemType Directory -Force "$psiDir/datastore" | Out-Null
           New-Item -ItemType Directory -Force "$psiDir/osl" | Out-Null
           try {
+              $compressed = "$psiDir/server_list_compressed"
               Invoke-WebRequest -Uri "https://s3.amazonaws.com/psiphon/web/mjr4-p23r-puwl/server_list_compressed" `
-                  -OutFile "$psiDir/remote_server_list" -UseBasicParsing -TimeoutSec 30
-              Write-Host "Successfully downloaded Psiphon remote_server_list"
+                  -OutFile $compressed -UseBasicParsing -TimeoutSec 60
+              $raw = [System.IO.File]::ReadAllBytes($compressed)
+              if ($raw.Length -gt 2 -and $raw[0] -eq 0x78 -and $raw[1] -eq 0x9C) {
+                  $ms = New-Object System.IO.MemoryStream(,$raw)
+                  $decoder = New-Object System.IO.Compression.ZLibStream($ms, [System.IO.Compression.CompressionMode]::Decompress)
+                  $reader = New-Object System.IO.StreamReader($decoder)
+                  $wrapper = $reader.ReadToEnd() | ConvertFrom-Json
+                  if ($wrapper.data) {
+                      [System.IO.File]::WriteAllText("$psiDir/remote_server_list", $wrapper.data)
+                      Write-Host "Seeded Psiphon server entries ($((($wrapper.data -split "`n").Count)) lines)"
+                  } else {
+                      Write-Warning "Psiphon server list wrapper had no data field; shipping the compressed list"
+                      Move-Item -Force $compressed "$psiDir/remote_server_list"
+                  }
+              } else {
+                  Write-Warning "Psiphon server list was not zlib compressed; shipping it as-is"
+                  Move-Item -Force $compressed "$psiDir/remote_server_list"
+              }
+              Remove-Item $compressed -ErrorAction SilentlyContinue
           } catch {
               Write-Warning "Could not fetch Psiphon server list: $_"
           }

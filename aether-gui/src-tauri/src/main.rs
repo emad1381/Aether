@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cdnscan;
 mod config;
 mod matrix;
 mod ping;
@@ -10,7 +11,7 @@ mod types;
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State as TauriState};
+use tauri::{AppHandle, Emitter, Manager, State as TauriState};
 
 use crate::config::{load_config, save_config};
 use crate::ping::{fetch_trace, measure_latency};
@@ -62,6 +63,22 @@ async fn fetch_trace_info(socks_port: u16) -> Result<TraceInfo, String> {
 #[tauri::command]
 fn get_saved_config() -> TunnelConfig {
     load_config()
+}
+
+/// Scan CDN edge addresses from this machine and report which ones complete a
+/// TLS handshake, so the fronting fields can be filled with edges that work on
+/// the network the user is actually on. `progress` carries (done, total) while
+/// the scan runs.
+#[tauri::command]
+async fn scan_cdn_edges(app: AppHandle) -> Result<cdnscan::CdnScanReport, String> {
+    let report = cdnscan::scan(|done, total| {
+        let _ = app.emit(
+            "aether-cdn-scan",
+            serde_json::json!({ "done": done, "total": total }),
+        );
+    })
+    .await;
+    Ok(report)
 }
 
 #[tauri::command]
@@ -293,7 +310,8 @@ fn main() {
             start_dragging,
             team_otp_submit,
             check_for_updates,
-            set_launch_at_startup
+            set_launch_at_startup,
+            scan_cdn_edges
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aether GUI");
