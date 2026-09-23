@@ -219,7 +219,7 @@ fn main() {
 
             let menu = Menu::with_items(app, &[&show_item, &toggle_item, &quit_item])?;
 
-            let _tray = TrayIconBuilder::new()
+            let mut tray_builder = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("Aether")
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -269,8 +269,19 @@ fn main() {
                             let _ = window.set_focus();
                         }
                     }
-                })
-                .build(app)?;
+                });
+            // Exactly one tray icon. Tauri used to also create a second one from
+            // the config's `app.trayIcon` — that was the colored icon with no
+            // menu, while this code-built tray had the menu but no icon, so
+            // Windows showed two entries and only the blank one was clickable.
+            // The config tray is gone; this one carries both menu and icon.
+            if let Ok(icon) = tauri::image::Image::from_bytes(
+                include_bytes!("../icons/128x128.png"),
+                tauri::image::ImageFormat::Png,
+            ) {
+                tray_builder = tray_builder.icon(icon);
+            }
+            let _tray = tray_builder.build(app)?;
 
             // Honor the saved startup behavior: keep the run-at-login registry
             // entry in sync, and open hidden when the user asked for tray-only.

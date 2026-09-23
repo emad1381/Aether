@@ -184,7 +184,7 @@ export const api = {
     if (hasTauri()) {
       return await window.__TAURI__.core.invoke('check_for_updates');
     }
-    return { current: '2.0.0', latest: '2.0.0', update_available: false, url: 'https://github.com/emad1381/Aether/releases' };
+    return { current: '2.1.0', latest: '2.1.0', update_available: false, url: 'https://github.com/emad1381/Aether/releases' };
   },
 
   async setLaunchAtStartup(enable, cfg) {

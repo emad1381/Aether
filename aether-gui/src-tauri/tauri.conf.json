@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Aether",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "identifier": "com.aether.client",
   "build": {
     "frontendDist": "../ui"
@@ -23,10 +23,6 @@
     ],
     "security": {
       "csp": "default-src 'self' 'unsafe-inline' data:; connect-src ipc: http: https:;"
-    },
-    "trayIcon": {
-      "iconPath": "icons/icon.ico",
-      "tooltip": "Aether"
     }
   },
   "bundle": {
