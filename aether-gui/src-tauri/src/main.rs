@@ -422,7 +422,14 @@ fn main() {
                             let cfg = load_config();
                             let socks = format!("127.0.0.1:{}", cfg.socks_port);
                             let http = cfg.http_port.map(|p| format!("127.0.0.1:{p}"));
-                            let _ = sup.stop_tunnel(app_handle).await;
+                            // Bounded: a wedged stop_tunnel must never keep the
+                            // process alive — an armed updater helper waits on
+                            // this pid, and a user clicking Exit expects an exit.
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(3),
+                                sup.stop_tunnel(app_handle),
+                            )
+                            .await;
                             let _ = set_windows_proxy(false, &socks, http.as_deref(), "");
                             std::process::exit(0);
                         });
