@@ -95,6 +95,14 @@ export const api = {
     }
   },
 
+  // Hard exit for the updater: never resolves, the process goes away under us.
+  async quitForUpdate() {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('quit_for_update');
+    }
+    return Promise.reject('installs only run inside the desktop app');
+  },
+
   async startDragging() {
     if (hasTauri()) {
       return await window.__TAURI__.core.invoke('start_dragging');
@@ -189,7 +197,7 @@ export const api = {
       .then((r) => r.json());
     const latest = String(release.tag_name || '').replace(/^v/, '');
     const asset = (release.assets || []).find((a) => a.name === 'aether-windows-x86_64-gui.zip');
-    const current = '2.1.2';
+    const current = '2.1.3';
     const parse = (v) => v.split('.').map((p) => parseInt(p, 10) || 0);
     const [la, lb, lc] = parse(latest);
     const [ca, cb, cc] = parse(current);

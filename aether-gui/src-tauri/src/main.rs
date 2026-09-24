@@ -113,6 +113,26 @@ fn close_window(app: AppHandle) {
     }
 }
 
+/// Exit hard so the already-armed updater helper can apply the downloaded zip.
+/// Two things otherwise keep the process alive forever here: window.close() is
+/// intercepted by the close-to-tray handler (the window just hides), and
+/// stop_tunnel can block on a wedged child — so stop gets a 3-second budget,
+/// the system proxy is cleared best-effort, and then the process exits
+/// directly without ever raising CloseRequested.
+#[tauri::command]
+async fn quit_for_update(app: AppHandle, supervisor: TauriState<'_, Arc<Supervisor>>) {
+    let cfg = load_config();
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        supervisor.stop_tunnel(app.clone()),
+    )
+    .await;
+    let socks = format!("127.0.0.1:{}", cfg.socks_port);
+    let http = cfg.http_port.map(|p| format!("127.0.0.1:{p}"));
+    let _ = set_windows_proxy(false, &socks, http.as_deref(), "");
+    std::process::exit(0);
+}
+
 #[tauri::command]
 fn start_dragging(app: AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -465,6 +485,7 @@ fn main() {
             minimize_window,
             maximize_window,
             close_window,
+            quit_for_update,
             start_dragging,
             team_otp_submit,
             check_for_updates,

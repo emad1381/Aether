@@ -1189,10 +1189,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         await api.downloadUpdate();
         if (body) body.textContent = 'Downloaded — installing. Aether will restart.';
+        updateModalOk.textContent = 'Installing…';
         if (unsubscribe) await unsubscribe();
         pendingUpdate = null;
-        try { await api.stopTunnel(); } catch (e) { /* already stopped */ }
-        setTimeout(() => { api.closeWindow(); }, 900);
+        // Hard exit: window.close() would be swallowed by close-to-tray and the
+        // armed helper would wait for a process that never ends. Never resolves.
+        try { await api.quitForUpdate(); } catch (e) { /* process exits under us */ }
       } catch (e) {
         if (unsubscribe) await unsubscribe();
         if (body) body.textContent = `Download failed: ${e}`;

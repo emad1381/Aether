@@ -1,6 +1,6 @@
 [package]
 name = "aether-gui"
-version = "2.1.2"
+version = "2.1.3"
 edition = "2021"
 authors = ["emad1381"]
 license = "AGPL-3.0-only"
