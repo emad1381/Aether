@@ -403,18 +403,34 @@ fn fronting_edge_override(id: &str, ip: &str, sni: &str) -> serde_json::Value {
     })
 }
 
+/// True for the certificate names the psiphon Akamai fronting setup actually
+/// uses (the server entries carry `meekFrontingDomain` values like
+/// a248.e.akamai.net and *.akamaized.net). Azure/CloudFront/Google scan SNIs
+/// must never be forced onto an Akamai edge: TLS then terminates as the wrong
+/// property and the fronting Host gets 403.
+fn is_akamai_fronting_name(name: &str) -> bool {
+    let name = name.trim().to_ascii_lowercase();
+    name.ends_with("akamai.net")
+        || name.ends_with("akamaihd.net")
+        || name.ends_with("akamaized.net")
+        || name == "www.akamai.com"
+}
+
 fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
     let user_ips = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_IPS").unwrap_or_default());
     let user_sni = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_SNI").unwrap_or_default());
 
-    // The SNI the forced edge dials present: the user's own first when they
-    // gave one (that is the paste-from-cdn-ip-finder flow the reference client
-    // is built around), otherwise a name every Akamai edge certifies. The
-    // reference client falls back to the IP itself here, which makes TLS drop
-    // the SNI entirely; a real hostname is strictly better and its certificate
-    // is already on the verify list below.
+    // The SNI the forced edge dials present. This MUST be an Akamai-family
+    // name: the dial addresses below are Akamai edges and the Host header is
+    // the server's own *.psiphon3.com fronting domain. Taking the user's first
+    // SNI blindly broke this — a scan result like ajax.aspnetcdn.com terminates
+    // TLS as a *different* Akamai property, and Akamai then rejects the psiphon
+    // Host with 403 (verified live: same edge, same Host, 403 with the Azure
+    // name vs a routed response with a248.e.akamai.net, which is the
+    // meekFrontingDomain these server entries themselves carry).
     let edge_sni = user_sni
-        .first()
+        .iter()
+        .find(|name| is_akamai_fronting_name(name))
         .cloned()
         .unwrap_or_else(|| "a248.e.akamai.net".to_string());
 
@@ -1519,7 +1535,10 @@ mod tests {
         clear();
         std::env::set_var("AETHER_PSIPHON_MODE", "cdn");
         std::env::set_var("AETHER_PSIPHON_CDN_IPS", "9.9.9.9");
-        std::env::set_var("AETHER_PSIPHON_CDN_SNI", "a248.e.akamai.net");
+        // An Azure scan SNI saved by the user: the forced Akamai edge dials
+        // must NOT inherit it — that pairing is what produced 403 Forbidden
+        // on every attempt (verified against a live Akamai edge).
+        std::env::set_var("AETHER_PSIPHON_CDN_SNI", "ajax.aspnetcdn.com");
 
         let dir = std::env::temp_dir();
         let text = build_config(
@@ -1556,6 +1575,8 @@ mod tests {
             .find(|o| o["OverrideID"].as_str() == Some("edge-ref-0"))
             .expect("first reference edge");
         assert_eq!(first_edge["DialAddresses"][0], "23.215.0.206");
+        // The user's Azure SNI must be ignored for edge dials; the Akamai
+        // fronting name is what the psiphon Host routes under.
         assert_eq!(first_edge["SNIServerName"], "a248.e.akamai.net");
         assert!(first_edge["VerifyServerNames"]
             .as_array()
