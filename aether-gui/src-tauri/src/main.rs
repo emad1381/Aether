@@ -120,7 +120,10 @@ fn close_window(app: AppHandle) {
 /// the system proxy is cleared best-effort, and then the process exits
 /// directly without ever raising CloseRequested.
 #[tauri::command]
-async fn quit_for_update(app: AppHandle, supervisor: TauriState<'_, Arc<Supervisor>>) {
+async fn quit_for_update(
+    app: AppHandle,
+    supervisor: TauriState<'_, Arc<Supervisor>>,
+) -> Result<(), String> {
     let cfg = load_config();
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -131,6 +134,8 @@ async fn quit_for_update(app: AppHandle, supervisor: TauriState<'_, Arc<Supervis
     let http = cfg.http_port.map(|p| format!("127.0.0.1:{p}"));
     let _ = set_windows_proxy(false, &socks, http.as_deref(), "");
     std::process::exit(0);
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 #[tauri::command]
