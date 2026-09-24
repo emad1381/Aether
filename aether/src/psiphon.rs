@@ -505,6 +505,7 @@ fn build_config(
     socks: SocketAddr,
     http: Option<SocketAddr>,
     upstream: Option<SocketAddr>,
+    chosen: Shape,
 ) -> Result<String> {
     let mut map = serde_json::Map::new();
 
@@ -544,7 +545,6 @@ fn build_config(
         serde_json::json!(0.0),
     );
 
-    let chosen = shape();
     put_cdn_fronting(&mut map);
 
     match (upstream.is_some(), chosen) {
@@ -933,12 +933,46 @@ pub async fn start(
     http: Option<SocketAddr>,
     upstream: Option<SocketAddr>,
 ) -> Result<Running> {
+    let chosen = shape();
+
+    // CDN fronting only works when a reachable edge of the *same* CDN that
+    // hosts each server's fronting domain answers: the dial is an IP, so the
+    // SNI comes out empty and the Host header carries the server's Akamai (or
+    // CloudFront) domain. On a network where those edges are filtered, every
+    // attempt dies — silently as dial timeouts, or with 403s from whatever
+    // other CDN edges do answer. Give the fronting attempt a shorter budget,
+    // then fall back to the auto shape once so unfronted protocols (OSSH,
+    // TLS-OSSH, ...) still get their turn instead of failing the whole tunnel.
+    if chosen == Shape::Cdn {
+        let cdn_budget = ready_timeout().min(Duration::from_secs(80));
+        match start_inner(state, socks, http, upstream, chosen, cdn_budget).await {
+            Ok(running) => return Ok(running),
+            Err(e) => {
+                log::warn!(
+                    "[-] cdn fronting did not come up on this network ({e}); retrying once with the auto shape so direct protocols get a chance"
+                );
+            }
+        }
+        return start_inner(state, socks, http, upstream, Shape::Auto, ready_timeout()).await;
+    }
+
+    start_inner(state, socks, http, upstream, chosen, ready_timeout()).await
+}
+
+async fn start_inner(
+    state: &Path,
+    socks: SocketAddr,
+    http: Option<SocketAddr>,
+    upstream: Option<SocketAddr>,
+    chosen: Shape,
+    timeout: Duration,
+) -> Result<Running> {
     let exe = binary().ok_or_else(|| AetherError::Other(install_hint()))?;
 
     std::fs::create_dir_all(state)
         .map_err(|e| AetherError::Other(format!("psiphon state dir {}: {e}", state.display())))?;
 
-    let config = build_config(state, socks, http, upstream)?;
+    let config = build_config(state, socks, http, upstream, chosen)?;
     let config_path = state.join("aether-psiphon.json");
     std::fs::write(&config_path, config)
         .map_err(|e| AetherError::Other(format!("psiphon config could not be saved: {e}")))?;
@@ -984,7 +1018,7 @@ pub async fn start(
     let mut http_port: Option<u16> = None;
     let mut tunnelled = false;
 
-    let deadline = tokio::time::Instant::now() + ready_timeout();
+    let deadline = tokio::time::Instant::now() + timeout;
 
     loop {
         let line = match tokio::time::timeout_at(deadline, lines.next_line()).await {
@@ -1250,6 +1284,7 @@ mod tests {
             "127.0.0.1:1821".parse().expect("an address"),
             None,
             None,
+            shape(),
         )
         .expect("a config");
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid json");
@@ -1276,6 +1311,7 @@ mod tests {
             "127.0.0.1:1821".parse().expect("an address"),
             None,
             None,
+            shape(),
         )
         .expect("a config");
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid json");
@@ -1299,6 +1335,7 @@ mod tests {
             "127.0.0.1:1821".parse().expect("an address"),
             None,
             Some("127.0.0.1:1819".parse().expect("an address")),
+            shape(),
         )
         .expect("a config");
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid json");
@@ -1334,6 +1371,7 @@ mod tests {
             "127.0.0.1:1821".parse().expect("an address"),
             None,
             None,
+            shape(),
         )
         .expect("a config");
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid json");
