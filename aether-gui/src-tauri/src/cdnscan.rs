@@ -24,6 +24,12 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// actually serves a valid certificate for.
 struct Cdn {
     name: &'static str,
+    /// Ranges probed densely first: the pockets that operator testing from
+    /// inside Iran shows actually carry Psiphon fronting. Uniform sampling over
+    /// a whole /14 mostly lands on edges this network never reaches, which is
+    /// how the earlier scan reported CloudFront/Azure while missing the Akamai
+    /// /24s that connect.
+    priority_cidrs: &'static [&'static str],
     /// CIDR blocks published by the CDN for its edge network.
     cidrs: &'static [&'static str],
     /// Hostname to send in SNI and verify against the edge certificate.
@@ -37,6 +43,24 @@ struct Cdn {
 const CDNS: &[Cdn] = &[
     Cdn {
         name: "Akamai",
+        // The /24 pockets cdn-ip-finder validates from Iranian operators and
+        // the pairing that connected live in testing (23.48.23.151).
+        priority_cidrs: &[
+            "184.24.77.0/24",
+            "185.200.232.0/24",
+            "23.48.23.0/24",
+            "104.112.146.0/24",
+            "23.58.193.0/24",
+            "2.22.250.0/24",
+            "92.16.53.0/24",
+            "92.16.19.0/24",
+            "72.246.28.0/24",
+            "72.18.63.0/24",
+            "23.43.237.0/24",
+            "185.143.232.0/24",
+            "12.19.126.0/24",
+            "23.202.138.0/24",
+        ],
         cidrs: &[
             "23.32.0.0/14",   // 23.32.0.0 - 23.35.255.255
             "23.48.0.0/14",   // 23.48.0.0 - 23.51.255.255
@@ -69,6 +93,7 @@ const CDNS: &[Cdn] = &[
     },
     Cdn {
         name: "Google",
+        priority_cidrs: &["34.143.72.0/24", "34.143.73.0/24", "34.143.74.0/24"],
         cidrs: &[
             "34.143.0.0/16",
             "34.160.0.0/16",
@@ -92,6 +117,7 @@ const CDNS: &[Cdn] = &[
     },
     Cdn {
         name: "CloudFront",
+        priority_cidrs: &["18.245.0.0/16", "52.84.0.0/16", "13.249.0.0/16"],
         cidrs: &[
             "13.32.0.0/15",
             "13.35.0.0/16",
@@ -139,6 +165,7 @@ const CDNS: &[Cdn] = &[
     },
     Cdn {
         name: "Azure",
+        priority_cidrs: &["20.79.0.0/16", "40.180.0.0/16"],
         cidrs: &[
             "13.107.4.0/22",
             "13.107.6.0/23",
@@ -184,6 +211,9 @@ const STRIDE: usize = 64;
 /// Hard cap of probes per CDN. Without it a single /10 would eat the whole
 /// budget inside its first prefix and the other CDNs would never be probed.
 const PER_CDN_BUDGET: usize = 250;
+
+/// Extra probes reserved for each CDN's priority ranges, sampled densely.
+const PRIORITY_BUDGET: usize = 400;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CdnEdge {
@@ -263,29 +293,38 @@ fn build_probes() -> Vec<Probe> {
     let mut probes = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    for cdn in CDNS {
-        // Walk each CDN's whole prefix space as one virtual address range and
-        // sample it evenly: one stride computed from its total size. A linear
-        // walk with a fixed stride would fill the cap inside the first /14 and
-        // never reach the rest of that CDN, let alone the other three.
-        let mut ranges: Vec<(u32, u32)> = Vec::with_capacity(cdn.cidrs.len());
-        let mut hosts: u64 = 0;
-        for cidr_str in cdn.cidrs {
-            let cidr: Ipv4Net = cidr_str.parse().expect("valid CIDR");
-            let start = u32::from(cidr.network());
-            let end = u32::from(cidr.broadcast());
-            hosts += u64::from(end - start) + 1;
-            ranges.push((start, end));
-        }
+    let parse_ranges = |cidrs: &[&str]| -> Vec<(u32, u32)> {
+        cidrs
+            .iter()
+            .filter_map(|c| c.parse::<Ipv4Net>().ok())
+            .map(|n| (u32::from(n.network()), u32::from(n.broadcast())))
+            .collect()
+    };
 
-        let stride = (hosts / PER_CDN_BUDGET as u64).max(STRIDE as u64);
+    // Sample a list of ranges evenly, at most `budget` probes, stride derived
+    // from the pass's own size so a single huge prefix cannot crowd out the
+    // ranges that follow it or the other CDNs.
+    let sample = |cdn: &Cdn,
+                      ranges: &[(u32, u32)],
+                      budget: usize,
+                      min_stride: u64,
+                      seen: &mut std::collections::HashSet<Ipv4Addr>,
+                      probes: &mut Vec<Probe>| {
+        let hosts: u64 = ranges
+            .iter()
+            .map(|(s, e)| u64::from(e.saturating_sub(*s)) + 1)
+            .sum();
+        if hosts == 0 {
+            return;
+        }
+        let stride = (hosts / budget as u64).max(min_stride).max(1);
         let mut index: u64 = 0;
         let mut added = 0usize;
 
         'walk: for (start, end) in ranges {
-            let mut ip = start;
-            while ip <= end {
-                if index % stride == 0 && added < PER_CDN_BUDGET {
+            let mut ip = *start;
+            loop {
+                if index % stride == 0 {
                     let addr = Ipv4Addr::from(ip);
                     if seen.insert(addr) {
                         probes.push(Probe {
@@ -295,17 +334,49 @@ fn build_probes() -> Vec<Probe> {
                         });
                         added += 1;
                     }
-                    if added >= PER_CDN_BUDGET {
+                    if added >= budget {
                         break 'walk;
                     }
                 }
                 index += 1;
+                if ip == *end {
+                    break;
+                }
                 ip = ip.wrapping_add(1);
             }
         }
+    };
+
+    for cdn in CDNS {
+        // Pass 1: the Iran-proven pockets, densely enough that the specific
+        // /24s psiphon actually fronts through are all represented.
+        let priority = parse_ranges(cdn.priority_cidrs);
+        sample(
+            cdn,
+            &priority,
+            PRIORITY_BUDGET,
+            1,
+            &mut seen,
+            &mut probes,
+        );
+
+        // Pass 2: the rest of the published footprint, spread evenly.
+        let rest = parse_ranges(cdn.cidrs);
+        sample(
+            cdn,
+            &rest,
+            PER_CDN_BUDGET,
+            STRIDE as u64,
+            &mut seen,
+            &mut probes,
+        );
     }
 
-    log::info!("[cdnscan] built {} probes across {} CDNs", probes.len(), CDNS.len());
+    log::info!(
+        "[cdnscan] built {} probes across {} CDNs",
+        probes.len(),
+        CDNS.len()
+    );
     probes
 }
 
@@ -438,7 +509,8 @@ mod tests {
     #[test]
     fn probe_count_is_bounded() {
         let probes = build_probes();
-        assert!(probes.len() <= 1200);
+        // 4 CDNs x (400 priority + 250 general) is the hard ceiling.
+        assert!(probes.len() <= 2600);
         assert!(probes.len() > 400);
     }
 
@@ -448,5 +520,23 @@ mod tests {
             assert!(!cdn.cidrs.is_empty(), "{} has no CIDRs", cdn.name);
             assert!(cdn.sni.contains('.'), "{} sni is not a hostname", cdn.name);
         }
+    }
+
+    #[test]
+    fn akamai_priority_pockets_are_probed() {
+        // The scan must reach the Iran-tested /24s specifically; missing them
+        // is what left the previous scan with no usable Akamai edges.
+        let akamai = CDNS.iter().find(|c| c.name == "Akamai").unwrap();
+        let probes: Vec<String> = build_probes()
+            .into_iter()
+            .filter(|p| p.cdn == "Akamai")
+            .map(|p| p.ip)
+            .collect();
+        assert!(akamai.priority_cidrs.len() >= 10);
+        // at least a few probes land inside 184.24.77.0/24 and 185.200.232.0/24
+        let in_pocket = probes.iter().filter(|ip| {
+            ip.starts_with("184.24.77.") || ip.starts_with("185.200.232.")
+        }).count();
+        assert!(in_pocket >= 10, "expected dense coverage of the tested pockets, got {in_pocket}");
     }
 }

@@ -136,6 +136,21 @@ fn sync_appdata_identities() {
     if !current_psiphon.exists() && appdata_psiphon.exists() {
         copy_dir_recursive(&appdata_psiphon, &current_psiphon);
     }
+
+    // A fresh zip can ship an empty psiphon state folder, which blocks the full
+    // AppData restore above; the server list alone decides whether psiphon can
+    // boot on a network that blocks its S3 refresh, so carry it across even
+    // when the folder already exists.
+    let list_rel = std::path::Path::new("ca.psiphon.PsiphonTunnel.tunnel-core")
+        .join("remote_server_list");
+    let current_list = current_psiphon.join(&list_rel);
+    let appdata_list = appdata_psiphon.join(&list_rel);
+    if !current_list.exists() && appdata_list.exists() {
+        if let Some(parent) = current_list.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::copy(&appdata_list, &current_list);
+    }
 }
 
 fn backup_identities_to_appdata() {

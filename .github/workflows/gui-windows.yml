@@ -94,20 +94,35 @@ jobs:
           } catch {
               Write-Warning "Could not provision initial identities: $_"
           }
+          # The native child resolves relative paths against the process working
+          # directory, which Push-Location does not move, so harvest the identity
+          # files from either location into the release folder.
+          $relAbs = (Get-Location).Path
+          $procCwd = [Environment]::CurrentDirectory
+          foreach ($id in @('aether.toml','aether-secondary.toml','aether-masque.toml','aether-masque-secondary.toml')) {
+              $dst = Join-Path $relAbs $id
+              if (Test-Path $dst) { continue }
+              foreach ($src in @((Join-Path $procCwd $id), (Join-Path (Get-Location).Path $id))) {
+                  if ((Test-Path $src) -and ($src -ne $dst)) { Move-Item -Force $src $dst; break }
+              }
+          }
 
           # Seed initial Psiphon server list directly from Psiphon distribution channel.
-          # The channel serves a zlib compressed signed JSON wrapper, but the tunnel
-          # core only imports the raw hex server entries inside it, so unwrap it here
-          # and ship the entries. Aether also unwraps the compressed form at runtime,
-          # so either layout connects.
+          # The channel serves a zlib compressed signed JSON wrapper; the tunnel core
+          # imports the raw hex entries inside it, so unwrap it here. Every path is
+          # absolute: .NET file APIs resolve relative paths against the process working
+          # directory (the workspace), not the Push-Location'd release folder — that
+          # mismatch is what silently dropped the server list from the last release and
+          # left the app unable to connect without a VPN. A zip without this file is
+          # unusable offline, so a missing file fails the build instead of shipping.
           Write-Host "Seeding initial Psiphon server list..."
-          $psiDir = "aether.toml-psiphon/ca.psiphon.PsiphonTunnel.tunnel-core"
-          New-Item -ItemType Directory -Force "$psiDir/datastore" | Out-Null
-          New-Item -ItemType Directory -Force "$psiDir/osl" | Out-Null
+          $seedRoot = Join-Path $relAbs "aether.toml-psiphon\ca.psiphon.PsiphonTunnel.tunnel-core"
+          New-Item -ItemType Directory -Force "$seedRoot\datastore", "$seedRoot\osl" | Out-Null
+          $final = Join-Path $seedRoot "remote_server_list"
+          $channel = "https://s3.amazonaws.com/psiphon/web/mjr4-p23r-puwl/server_list_compressed"
           try {
-              $compressed = "$psiDir/server_list_compressed"
-              Invoke-WebRequest -Uri "https://s3.amazonaws.com/psiphon/web/mjr4-p23r-puwl/server_list_compressed" `
-                  -OutFile $compressed -UseBasicParsing -TimeoutSec 60
+              $compressed = Join-Path $seedRoot "server_list_compressed"
+              Invoke-WebRequest -Uri $channel -OutFile $compressed -UseBasicParsing -TimeoutSec 60
               $raw = [System.IO.File]::ReadAllBytes($compressed)
               if ($raw.Length -gt 2 -and $raw[0] -eq 0x78 -and $raw[1] -eq 0x9C) {
                   $ms = New-Object System.IO.MemoryStream(,$raw)
@@ -115,19 +130,27 @@ jobs:
                   $reader = New-Object System.IO.StreamReader($decoder)
                   $wrapper = $reader.ReadToEnd() | ConvertFrom-Json
                   if ($wrapper.data) {
-                      [System.IO.File]::WriteAllText("$psiDir/remote_server_list", $wrapper.data)
+                      [System.IO.File]::WriteAllText($final, $wrapper.data)
                       Write-Host "Seeded Psiphon server entries ($((($wrapper.data -split "`n").Count)) lines)"
-                  } else {
-                      Write-Warning "Psiphon server list wrapper had no data field; shipping the compressed list"
-                      Move-Item -Force $compressed "$psiDir/remote_server_list"
                   }
-              } else {
-                  Write-Warning "Psiphon server list was not zlib compressed; shipping it as-is"
-                  Move-Item -Force $compressed "$psiDir/remote_server_list"
               }
-              Remove-Item $compressed -ErrorAction SilentlyContinue
+              if (Test-Path $final) {
+                  Remove-Item $compressed -ErrorAction SilentlyContinue
+              } else {
+                  # psiphon reads the signed wrapper natively from its datastore
+                  # path, so shipping it raw still boots offline.
+                  Move-Item -Force $compressed $final
+              }
           } catch {
-              Write-Warning "Could not fetch Psiphon server list: $_"
+              Write-Warning "Psiphon seed unwrap failed: $_"
+              try {
+                  Invoke-WebRequest -Uri $channel -OutFile $final -UseBasicParsing -TimeoutSec 60
+              } catch {
+                  Write-Warning "Psiphon channel fallback failed: $_"
+              }
+          }
+          if (!(Test-Path $final)) {
+              throw "Psiphon server list seed failed: $final is missing; refusing to ship a zip that cannot connect offline"
           }
           Pop-Location
 
@@ -163,6 +186,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: "v2.1.0"
+          tag_name: "v2.1.1"
           files: aether/aether-windows-x86_64-gui.zip
           fail_on_unmatched_files: false

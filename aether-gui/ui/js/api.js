@@ -184,7 +184,38 @@ export const api = {
     if (hasTauri()) {
       return await window.__TAURI__.core.invoke('check_for_updates');
     }
-    return { current: '2.1.0', latest: '2.1.0', update_available: false, url: 'https://github.com/emad1381/Aether/releases' };
+    // Dev/preview fallback: the same real GitHub check, done from the page.
+    const release = await fetch('https://api.github.com/repos/emad1381/Aether/releases/latest')
+      .then((r) => r.json());
+    const latest = String(release.tag_name || '').replace(/^v/, '');
+    const asset = (release.assets || []).find((a) => a.name === 'aether-windows-x86_64-gui.zip');
+    const current = '2.1.1';
+    const parse = (v) => v.split('.').map((p) => parseInt(p, 10) || 0);
+    const [la, lb, lc] = parse(latest);
+    const [ca, cb, cc] = parse(current);
+    const newer = la > ca || (la === ca && (lb > cb || (lb === cb && lc > cc)));
+    return {
+      current,
+      latest,
+      update_available: !!latest && newer,
+      url: release.html_url || 'https://github.com/emad1381/Aether/releases',
+      asset_url: asset ? asset.browser_download_url : ''
+    };
+  },
+
+  async downloadUpdate() {
+    if (hasTauri()) {
+      return await window.__TAURI__.core.invoke('download_update');
+    }
+    return Promise.reject('downloads install only inside the desktop app');
+  },
+
+  async onUpdateProgress(callback) {
+    if (hasTauri() && window.__TAURI__.event) {
+      return await window.__TAURI__.event.listen('aether-update-progress', (event) => {
+        callback(event.payload);
+      });
+    }
   },
 
   async setLaunchAtStartup(enable, cfg) {

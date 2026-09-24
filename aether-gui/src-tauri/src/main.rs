@@ -135,16 +135,16 @@ pub struct UpdateInfo {
     pub latest: String,
     pub update_available: bool,
     pub url: String,
+    /// Direct browser_download_url of the Windows zip in that release, empty
+    /// when the release carries no asset yet (a build still running).
+    pub asset_url: String,
 }
 
-/// Real update check: compare against the latest GitHub release.
-#[tauri::command]
-async fn check_for_updates() -> Result<UpdateInfo, String> {
-    let client = reqwest::Client::builder()
-        .user_agent(format!("aether-gui/{}", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
+const UPDATE_ASSET_NAME: &str = "aether-windows-x86_64-gui.zip";
+
+async fn fetch_latest_release(
+    client: &reqwest::Client,
+) -> Result<(String, String, String), String> {
     let release: serde_json::Value = client
         .get("https://api.github.com/repos/emad1381/Aether/releases/latest")
         .send()
@@ -167,13 +167,161 @@ async fn check_for_updates() -> Result<UpdateInfo, String> {
         .and_then(|v| v.as_str())
         .unwrap_or("https://github.com/emad1381/Aether/releases")
         .to_string();
+    let asset_url = release
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .and_then(|assets| {
+            assets.iter().find(|a| {
+                a.get("name").and_then(|n| n.as_str()) == Some(UPDATE_ASSET_NAME)
+            })
+        })
+        .and_then(|a| a.get("browser_download_url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Ok((latest, url, asset_url))
+}
+
+/// True when `candidate` is a strictly newer version than `current`. A plain
+/// != check would offer the user an older release whenever the tag moves
+/// backwards or the build under test is ahead of the published tag.
+fn is_newer_version(candidate: &str, current: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.trim_start_matches('v')
+            .split('.')
+            .map(|part| part.trim().parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let (a, b) = (parse(candidate), parse(current));
+    for i in 0..a.len().max(b.len()) {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// Real update check: compare against the latest GitHub release.
+#[tauri::command]
+async fn check_for_updates() -> Result<UpdateInfo, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("aether-gui/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (latest, url, asset_url) = fetch_latest_release(&client).await?;
     let current = env!("CARGO_PKG_VERSION").to_string();
     Ok(UpdateInfo {
-        update_available: latest != current,
+        update_available: is_newer_version(&latest, &current),
         current,
         latest,
         url,
+        asset_url,
     })
+}
+
+/// Download the release zip, stage it, and arm a detached helper that waits for
+/// this process to exit, unpacks over the install folder and relaunches. The
+/// in-app files cannot be replaced while the exe is running, hence the helper.
+#[tauri::command]
+async fn download_update(app: AppHandle) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("aether-gui/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (_latest, _url, asset_url) = fetch_latest_release(&client).await?;
+    if asset_url.is_empty() {
+        return Err("the latest release has no Windows zip yet; the build may still be running".into());
+    }
+
+    let stage = std::env::temp_dir().join("AetherUpdate");
+    std::fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
+    let zip_path = stage.join(UPDATE_ASSET_NAME);
+
+    let response = client
+        .get(&asset_url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?;
+    let total = response.content_length().unwrap_or(0);
+
+    let mut downloaded: u64 = 0;
+    let mut file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+    use std::io::Write;
+    let mut stream = response;
+    while let Some(chunk) = stream
+        .chunk()
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+        let _ = app.emit(
+            "aether-update-progress",
+            serde_json::json!({ "downloaded": downloaded, "total": total }),
+        );
+    }
+    drop(file);
+
+    // Helper: wait for our pid, unpack over the install dir, relaunch, self-delete.
+    let install_dir = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .ok_or("exe has no parent dir")?
+        .to_path_buf();
+    let pid = std::process::id().to_string();
+    let script = stage.join("apply-update.ps1");
+    let script_body = format!(
+        r#"param([string]$OwnerPid, [string]$Zip, [string]$InstallDir, [string]$ExeName)
+while (Get-Process -Id $OwnerPid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 800 }}
+$stage = Join-Path $env:TEMP ("AetherApply-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+try {{
+  Expand-Archive -Path $Zip -DestinationPath $stage -Force
+  Get-ChildItem -Path $stage -Force | ForEach-Object {{
+    $dest = Join-Path $InstallDir $_.Name
+    if ($_.PSIsContainer) {{ Copy-Item -LiteralPath $_.FullName -Destination $InstallDir -Recurse -Force }}
+    else {{ Copy-Item -LiteralPath $_.FullName -Destination $dest -Force }}
+  }}
+}} finally {{
+  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+}}
+Start-Process -FilePath (Join-Path $InstallDir $ExeName)
+Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
+"#,
+    );
+    std::fs::write(&script, script_body).map_err(|e| e.to_string())?;
+
+    let mut helper = std::process::Command::new("powershell.exe");
+    helper
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&script)
+        .arg(&pid)
+        .arg(&zip_path)
+        .arg(&install_dir)
+        .arg("aether-gui.exe");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        helper.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+    }
+    helper
+        .spawn()
+        .map_err(|e| format!("could not start the updater helper: {e}"))?;
+
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -320,6 +468,7 @@ fn main() {
             start_dragging,
             team_otp_submit,
             check_for_updates,
+            download_update,
             set_launch_at_startup,
             scan_cdn_edges
         ])

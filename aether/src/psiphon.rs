@@ -339,29 +339,45 @@ pub fn cdn_fronting_sni() -> Vec<&'static str> {
         .collect()
 }
 
-fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
-    let addresses = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_IPS").unwrap_or_default());
-    let mut names = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_SNI").unwrap_or_default());
+/// Edge addresses that are reachable from inside Iran and front Psiphon
+/// correctly, collected from cdn-ip-finder's operator-tested lists and the one
+/// pairing that connected live (23.48.23.151 with a248.e.akamai.net). They are
+/// offered first so a scan that only found generic Azure/CloudFront edges —
+/// which answer the TLS handshake but return 403 to a fronting Host — cannot
+/// crowd out the edges that actually carry the tunnel.
+const IR_PROVEN_CDN_IPS: &[&str] = &[
+    "184.24.77.42", "184.24.77.32", "184.24.77.5", "184.24.77.7", "184.24.77.21",
+    "184.24.77.11", "184.24.77.16", "184.24.77.36", "185.200.232.49", "185.200.232.50",
+    "185.200.232.42", "185.200.232.41", "185.200.232.43", "185.200.232.8", "23.48.23.151",
+    "23.48.23.186", "23.48.23.133", "23.48.23.195", "104.112.146.82", "23.58.193.140",
+    "2.22.250.149", "92.16.53.11", "72.246.28.3",
+];
 
-    if addresses.is_empty() {
-        map.insert(
-            "FrontedMeekCDNScanUseBuiltInSpec".into(),
-            serde_json::Value::from(true),
-        );
-        return;
+fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
+    let user_ips = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_IPS").unwrap_or_default());
+    let user_sni = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_SNI").unwrap_or_default());
+
+    // Curated edges first, then whatever the in-app scanner found, deduped.
+    let mut addresses: Vec<String> = IR_PROVEN_CDN_IPS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    for ip in user_ips {
+        if !addresses.contains(&ip) {
+            addresses.push(ip);
+        }
     }
 
-    // Edges without names to present are unusable: the fronted-meek handshake
-    // verifies the edge certificate against the name it sent, and psiphon's own
-    // fallback names are not served by every CDN, so a certificate mismatch
-    // silently burns the whole candidate. When the user (or the scanner) gave
-    // edges but no names, offer every known fronting name and let the scan keep
-    // the pair that verifies.
-    if names.is_empty() {
-        names = cdn_fronting_sni()
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+    // Names the edges actually hold certificates for, user's own first when
+    // they gave any (their pairing may be the one that verifies), then the
+    // known-good set. An empty list used to leave psiphon guessing names like
+    // www.akamai.com, which the edge rejects with a certificate mismatch.
+    let mut names = user_sni;
+    for name in cdn_fronting_sni() {
+        let owned = name.to_string();
+        if !names.contains(&owned) {
+            names.push(owned);
+        }
     }
 
     let mut spec = serde_json::Map::new();
@@ -721,9 +737,53 @@ fn note(kind: &str, data: &serde_json::Value) {
 /// child process. Decoding the hex into plaintext would be wrong: it fuses the
 /// lines together and psiphon then sees one giant malformed entry.
 fn server_list_file(state: &Path) -> Option<PathBuf> {
-    let path = server_list_path(state)?;
+    // The file is searched in three places because they drift apart in
+    // practice: the state directory the engine was pointed at, the folder
+    // beside the engine binary (where the release zip seeds it), and the
+    // AppData identity mirror that survives re-extractions. A list found
+    // outside the state directory is copied in, so psiphon's own datastore
+    // reader finds it too.
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(given) = server_list_path(state) {
+        candidates.push(given);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(
+                dir.join("aether.toml-psiphon")
+                    .join(SERVER_LIST_SUBDIR)
+                    .join("remote_server_list"),
+            );
+        }
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        candidates.push(
+            PathBuf::from(appdata)
+                .join("Aether")
+                .join("aether.toml-psiphon")
+                .join(SERVER_LIST_SUBDIR)
+                .join("remote_server_list"),
+        );
+    }
+
+    let Some(path) = candidates.into_iter().find(|p| p.is_file()) else {
+        log::warn!(
+            "[-] psiphon bundled server list not found (searched state dir, beside the engine binary, and AppData); without it psiphon depends on the blocked S3 download"
+        );
+        return None;
+    };
+
     let bytes = std::fs::read(&path).ok()?;
     let entries = decode_server_list(&bytes)?;
+
+    // Let psiphon's own importer see the same file.
+    let native = state.join(SERVER_LIST_SUBDIR).join("remote_server_list");
+    if path != native {
+        let _ = std::fs::create_dir_all(native.parent().unwrap_or(state));
+        if !native.exists() {
+            let _ = std::fs::copy(&path, &native);
+        }
+    }
 
     let out = state.join("server-entries.txt");
     std::fs::write(&out, &entries).ok()?;
@@ -735,6 +795,8 @@ fn server_list_file(state: &Path) -> Option<PathBuf> {
     );
     Some(out)
 }
+
+const SERVER_LIST_SUBDIR: &str = "ca.psiphon.PsiphonTunnel.tunnel-core";
 
 #[cfg(test)]
 mod server_list_tests {
@@ -792,9 +854,7 @@ fn server_list_path(state: &Path) -> Option<PathBuf> {
         .filter(|v| !v.is_empty())
         .map(PathBuf::from);
 
-    let bundled = state
-        .join("ca.psiphon.PsiphonTunnel.tunnel-core")
-        .join("remote_server_list");
+    let bundled = state.join(SERVER_LIST_SUBDIR).join("remote_server_list");
 
     [given, Some(bundled)]
         .into_iter()

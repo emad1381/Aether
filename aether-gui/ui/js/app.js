@@ -1119,6 +1119,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 180);
   }
 
+  let pendingUpdate = null;
+
   if (btnCheckUpdates) {
     btnCheckUpdates.addEventListener('click', async () => {
       if (isCheckingUpdates) return;
@@ -1128,6 +1130,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       try {
         const info = await api.checkForUpdates();
+        pendingUpdate = info.update_available ? info : null;
         const title = document.getElementById('update-modal-title');
         const body = document.getElementById('update-modal-body');
         const link = document.getElementById('update-modal-link');
@@ -1136,19 +1139,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         if (body) {
           body.textContent = info.update_available
-            ? `You are on v${info.current}; v${info.latest} is out.`
+            ? `You are on v${info.current}; v${info.latest} is out. Press install to download and restart.`
             : `v${info.current} is the latest release.`;
         }
         if (link) {
           link.textContent = info.url;
           link.classList.toggle('hidden', !info.update_available);
         }
+        if (updateModalOk) {
+          updateModalOk.disabled = false;
+          updateModalOk.textContent = info.update_available ? 'Download & install' : 'Close';
+        }
         openUpdateModal();
       } catch (e) {
+        pendingUpdate = null;
         const title = document.getElementById('update-modal-title');
         const body = document.getElementById('update-modal-body');
         if (title) title.textContent = 'Update check failed';
         if (body) body.textContent = `Could not reach GitHub: ${e}`;
+        if (updateModalOk) {
+          updateModalOk.disabled = false;
+          updateModalOk.textContent = 'Close';
+        }
         openUpdateModal();
       } finally {
         isCheckingUpdates = false;
@@ -1159,7 +1171,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (updateModalClose) updateModalClose.addEventListener('click', closeUpdateModal);
-  if (updateModalOk) updateModalOk.addEventListener('click', closeUpdateModal);
+  if (updateModalOk) {
+    updateModalOk.addEventListener('click', async () => {
+      if (!pendingUpdate) {
+        closeUpdateModal();
+        return;
+      }
+      const body = document.getElementById('update-modal-body');
+      updateModalOk.disabled = true;
+      updateModalOk.textContent = 'Downloading...';
+      const unsubscribe = await api.onUpdateProgress((p) => {
+        if (!body) return;
+        const done = (Number(p.downloaded) / 1048576).toFixed(1);
+        const totalMb = Number(p.total) > 0 ? (Number(p.total) / 1048576).toFixed(1) : '?';
+        body.textContent = `Downloading v${pendingUpdate.latest}... ${done} / ${totalMb} MB`;
+      });
+      try {
+        await api.downloadUpdate();
+        if (body) body.textContent = 'Downloaded — installing. Aether will restart.';
+        if (unsubscribe) await unsubscribe();
+        pendingUpdate = null;
+        try { await api.stopTunnel(); } catch (e) { /* already stopped */ }
+        setTimeout(() => { api.closeWindow(); }, 900);
+      } catch (e) {
+        if (unsubscribe) await unsubscribe();
+        if (body) body.textContent = `Download failed: ${e}`;
+        updateModalOk.disabled = false;
+        updateModalOk.textContent = 'Retry';
+      }
+    });
+  }
 
   // Restore Defaults
   function restoreDefaults() {
