@@ -137,6 +137,23 @@ fn sync_appdata_identities() {
         copy_dir_recursive(&appdata_psiphon, &current_psiphon);
     }
 
+    // A fresh zip seeds an *empty* datastore directory, so current_psiphon
+    // always "exists" and the full restore above never runs: every extraction
+    // used to start with a cold boltdb and silently discard the tactics
+    // parameter cache and InproxyBrokerSpecs fetched during an earlier
+    // session (e.g. one VPN-assisted connect). Those cached broker specs are
+    // what let the in-proxy WebRTC path dial at all on a network where
+    // tactics fetches and fronted dials both fail — restore the datastore
+    // itself whenever it is missing.
+    let boltdb_rel = std::path::Path::new("ca.psiphon.PsiphonTunnel.tunnel-core")
+        .join("datastore")
+        .join("psiphon.boltdb");
+    if !current_psiphon.join(&boltdb_rel).exists()
+        && appdata_psiphon.join(&boltdb_rel).exists()
+    {
+        copy_dir_recursive(&appdata_psiphon, &current_psiphon);
+    }
+
     // A fresh zip can ship an empty psiphon state folder, which blocks the full
     // AppData restore above; the server list alone decides whether psiphon can
     // boot on a network that blocks its S3 refresh, so carry it across even
