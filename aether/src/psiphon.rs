@@ -353,9 +353,70 @@ const IR_PROVEN_CDN_IPS: &[&str] = &[
     "2.22.250.149", "92.16.53.11", "72.246.28.3",
 ];
 
+/// Akamai edge addresses the reference client (ShirOKhorshid's
+/// TunnelManager.java) forces every fronted dial onto via
+/// `FrontedMeekDialOverrides`. Ported verbatim: they are the addresses that
+/// pair with the Akamai certificate names in the override's verify list, which
+/// is what turns "some reachable IP" into "a dial that verifies and routes".
+const REFERENCE_DIAL_EDGES: &[&str] = &[
+    "23.215.0.206",
+    "23.215.0.203",
+    "23.212.250.91",
+    "23.212.250.78",
+    "23.12.147.13",
+    "23.12.147.29",
+    "23.73.207.8",
+    "23.73.207.15",
+    "92.123.102.43",
+];
+
+/// One dial override: force this server's fronted dial onto `ip` with an
+/// explicit SNI and a verify list the edge's certificate actually matches.
+/// Mirrors makeEdgeCdnFrontingOverride — match everything, http/1.1, the
+/// Chrome-83 TLS profile, and the Akamai hostname set the reference client
+/// accepts. The Host header is deliberately not touched: it stays the
+/// server's own fronting domain, which is what makes the edge route onward.
+fn fronting_edge_override(id: &str, ip: &str, sni: &str) -> serde_json::Value {
+    let mut verify: Vec<String> = vec![sni.to_string(), ip.to_string()];
+    for name in [
+        "a248.e.akamai.net",
+        "a.akamaized.net",
+        "a.akamaized-staging.net",
+        "a.akamaihd.net",
+        "a.akamaihd-staging.net",
+        "www.akamai.com",
+    ] {
+        let owned = name.to_string();
+        if !verify.contains(&owned) {
+            verify.push(owned);
+        }
+    }
+
+    serde_json::json!({
+        "OverrideID": id,
+        "MatchDialAddressRegexes": [".*"],
+        "DialAddresses": [ip],
+        "SNIServerName": sni,
+        "VerifyServerNames": verify,
+        "ALPNProtocols": ["http/1.1"],
+        "TLSProfile": "Chrome-83",
+    })
+}
+
 fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
     let user_ips = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_IPS").unwrap_or_default());
     let user_sni = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_SNI").unwrap_or_default());
+
+    // The SNI the forced edge dials present: the user's own first when they
+    // gave one (that is the paste-from-cdn-ip-finder flow the reference client
+    // is built around), otherwise a name every Akamai edge certifies. The
+    // reference client falls back to the IP itself here, which makes TLS drop
+    // the SNI entirely; a real hostname is strictly better and its certificate
+    // is already on the verify list below.
+    let edge_sni = user_sni
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "a248.e.akamai.net".to_string());
 
     // Curated edges first, then whatever the in-app scanner found, deduped.
     let mut addresses: Vec<String> = IR_PROVEN_CDN_IPS
@@ -369,9 +430,7 @@ fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
     }
 
     // Names the edges actually hold certificates for, user's own first when
-    // they gave any (their pairing may be the one that verifies), then the
-    // known-good set. An empty list used to leave psiphon guessing names like
-    // www.akamai.com, which the edge rejects with a certificate mismatch.
+    // they gave any, then the known-good set.
     let mut names = user_sni;
     for name in cdn_fronting_sni() {
         let owned = name.to_string();
@@ -379,6 +438,14 @@ fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
             names.push(owned);
         }
     }
+
+    // Psiphon's own maintained edge spec stays enabled alongside ours — the
+    // reference client never suppresses it, and its tested pairs are exactly
+    // what a custom candidate list should complement rather than replace.
+    map.insert(
+        "FrontedMeekCDNScanUseBuiltInSpec".into(),
+        serde_json::Value::from(true),
+    );
 
     let mut spec = serde_json::Map::new();
     spec.insert("IPCandidates".into(), serde_json::json!(addresses));
@@ -388,6 +455,67 @@ fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
     map.insert(
         "FrontedMeekCDNScanSpec".into(),
         serde_json::Value::Object(spec),
+    );
+
+    // The mechanism that actually connects in the reference client: force the
+    // dial onto known edges with a verifiable SNI. Two Fastly paths (psiphon
+    // fronts some servers through Fastly, reached as the pypi.org anycast)
+    // plus the Akamai edge set — the reference list, then our Iran-proven
+    // Akamai addresses. Azure/CloudFront scan results stay in the scan spec
+    // only: as forced overrides they would guarantee 403s, because no Akamai
+    // certificate verifies on them.
+    let mut overrides: Vec<serde_json::Value> = Vec::new();
+
+    let fastly_verify = serde_json::json!([
+        "www.python.org",
+        "pypi.org",
+        "fastly.com",
+        "www.fastly.com",
+        "developer.fastly.com",
+        "githubassets.com",
+        "github.com",
+        "github.io",
+        "githubusercontent.com"
+    ]);
+    overrides.push(serde_json::json!({
+        "OverrideID": "fastly-provider",
+        "MatchFrontingProviderIDRegexes": ["(?i)fastly"],
+        "DialAddresses": ["pypi.org"],
+        "SNIServerName": "pypi.org",
+        "VerifyServerNames": fastly_verify,
+        "ALPNProtocols": ["h2", "http/1.1"],
+        "TLSProfile": "Chrome-83",
+    }));
+    overrides.push(serde_json::json!({
+        "OverrideID": "fastly-address",
+        "MatchDialAddressRegexes": ["(?i)(fastly|pypi|python|github)"],
+        "DialAddresses": ["pypi.org"],
+        "SNIServerName": "pypi.org",
+        "VerifyServerNames": fastly_verify,
+        "ALPNProtocols": ["h2", "http/1.1"],
+        "TLSProfile": "Chrome-83",
+    }));
+
+    let mut forced: Vec<String> = Vec::new();
+    for (i, ip) in REFERENCE_DIAL_EDGES.iter().enumerate() {
+        forced.push(ip.to_string());
+        overrides.push(fronting_edge_override(&format!("edge-ref-{i}"), ip, &edge_sni));
+    }
+    for (i, ip) in IR_PROVEN_CDN_IPS.iter().enumerate() {
+        if forced.contains(&ip.to_string()) {
+            continue;
+        }
+        forced.push(ip.to_string());
+        overrides.push(fronting_edge_override(&format!("edge-cur-{i}"), ip, &edge_sni));
+    }
+
+    map.insert(
+        "FrontedMeekDialOverrides".into(),
+        serde_json::json!(overrides),
+    );
+    map.insert(
+        "FrontedMeekDialOverridesProbability".into(),
+        serde_json::json!(1.0),
     );
 }
 
@@ -1381,6 +1509,67 @@ mod tests {
         std::env::remove_var("AETHER_PSIPHON_CONFIG");
         let _ = std::fs::remove_file(&path);
 
+        clear();
+    }
+
+    #[test]
+    fn cdn_fronting_carries_the_reference_client_dial_overrides() {
+        let _held = hold();
+
+        clear();
+        std::env::set_var("AETHER_PSIPHON_MODE", "cdn");
+        std::env::set_var("AETHER_PSIPHON_CDN_IPS", "9.9.9.9");
+        std::env::set_var("AETHER_PSIPHON_CDN_SNI", "a248.e.akamai.net");
+
+        let dir = std::env::temp_dir();
+        let text = build_config(
+            &dir,
+            "127.0.0.1:1821".parse().expect("an address"),
+            None,
+            None,
+            Shape::Cdn,
+        )
+        .expect("a config");
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+
+        // The reference client (ShirOKhorshid) never suppresses psiphon's own
+        // edge spec, forces every fronted dial through overrides at full
+        // probability, and includes a Fastly path — all three must be present
+        // or custom edges degrade back to bare IPs that 403.
+        assert_eq!(parsed["FrontedMeekCDNScanUseBuiltInSpec"], true);
+        assert_eq!(parsed["FrontedMeekDialOverridesProbability"], 1.0);
+
+        let overrides = parsed["FrontedMeekDialOverrides"]
+            .as_array()
+            .expect("overrides array");
+        assert!(overrides.len() >= 10, "reference edges plus ours");
+
+        let ids: Vec<&str> = overrides
+            .iter()
+            .filter_map(|o| o["OverrideID"].as_str())
+            .collect();
+        assert!(ids.contains(&"fastly-provider"), "Fastly path present");
+        assert!(ids.contains(&"fastly-address"), "Fastly path present");
+
+        let first_edge = overrides
+            .iter()
+            .find(|o| o["OverrideID"].as_str() == Some("edge-ref-0"))
+            .expect("first reference edge");
+        assert_eq!(first_edge["DialAddresses"][0], "23.215.0.206");
+        assert_eq!(first_edge["SNIServerName"], "a248.e.akamai.net");
+        assert!(first_edge["VerifyServerNames"]
+            .as_array()
+            .expect("verify list")
+            .iter()
+            .any(|v| v == "www.akamai.com"));
+
+        // The user's scanned IPs reach the scan spec; the forced overrides
+        // stay on CDN edges whose certificates can actually verify.
+        assert_eq!(parsed["FrontedMeekCDNScanSpec"]["IPCandidates"][0], "9.9.9.9");
+
+        std::env::remove_var("AETHER_PSIPHON_MODE");
+        std::env::remove_var("AETHER_PSIPHON_CDN_IPS");
+        std::env::remove_var("AETHER_PSIPHON_CDN_SNI");
         clear();
     }
 

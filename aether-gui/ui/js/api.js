@@ -197,7 +197,7 @@ export const api = {
       .then((r) => r.json());
     const latest = String(release.tag_name || '').replace(/^v/, '');
     const asset = (release.assets || []).find((a) => a.name === 'aether-windows-x86_64-gui.zip');
-    const current = '2.1.3';
+    const current = '2.1.4';
     const parse = (v) => v.split('.').map((p) => parseInt(p, 10) || 0);
     const [la, lb, lc] = parse(latest);
     const [ca, cb, cc] = parse(current);
