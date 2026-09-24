@@ -178,7 +178,7 @@ async fn check_for_updates() -> Result<UpdateInfo, String> {
 
 #[cfg(windows)]
 fn apply_launch_at_startup(enable: bool) -> Result<(), String> {
-    use winreg::enums::{HKEY_CURRENT_USER, KEY_WRITE};
+    use winreg::enums::HKEY_CURRENT_USER;
     let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
     let (run, _) = hkcu
         .create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
@@ -275,10 +275,9 @@ fn main() {
             // menu, while this code-built tray had the menu but no icon, so
             // Windows showed two entries and only the blank one was clickable.
             // The config tray is gone; this one carries both menu and icon.
-            if let Ok(icon) = tauri::image::Image::from_bytes(
-                include_bytes!("../icons/128x128.png"),
-                tauri::image::ImageFormat::Png,
-            ) {
+            if let Ok(icon) =
+                tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))
+            {
                 tray_builder = tray_builder.icon(icon);
             }
             let _tray = tray_builder.build(app)?;
