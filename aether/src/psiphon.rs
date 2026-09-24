@@ -295,6 +295,11 @@ pub const CDN_FRONTING_SNI: &[(&str, &[&str])] = &[
             "a77.net.akamai.net",
             "a104.net.akamai.net",
             "a184.net.akamai.net",
+            "a.akamaized.net",
+            // The SNI that actually connected in the reference client's log on
+            // this very network: "CDN Fronting edge: 185.200.232.49 via
+            // a.akamaized-staging.net".
+            "a.akamaized-staging.net",
             "ds-aksb.akamaized.net",
             "ak.net.akamaized.net",
         ],
@@ -420,19 +425,31 @@ fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
     let user_ips = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_IPS").unwrap_or_default());
     let user_sni = cdn_candidates(&std::env::var("AETHER_PSIPHON_CDN_SNI").unwrap_or_default());
 
-    // The SNI the forced edge dials present. This MUST be an Akamai-family
-    // name: the dial addresses below are Akamai edges and the Host header is
-    // the server's own *.psiphon3.com fronting domain. Taking the user's first
-    // SNI blindly broke this — a scan result like ajax.aspnetcdn.com terminates
-    // TLS as a *different* Akamai property, and Akamai then rejects the psiphon
-    // Host with 403 (verified live: same edge, same Host, 403 with the Azure
-    // name vs a routed response with a248.e.akamai.net, which is the
-    // meekFrontingDomain these server entries themselves carry).
-    let edge_sni = user_sni
+    // The SNI pool for forced edge dials. Only Akamai-family names qualify:
+    // the dial addresses below are Akamai edges and the Host header is the
+    // server's own *.psiphon3.com domain — a scan result like
+    // ajax.aspnetcdn.com terminates TLS as a different property and Akamai
+    // answers 403 (verified live). Within the family the reference client
+    // rotates candidates and its winning pair on this network was
+    // a.akamaized-staging.net, not a248 — so we rotate too, one name per
+    // edge, instead of forcing a single SNI onto every edge.
+    let mut edge_sni_pool: Vec<String> = user_sni
         .iter()
-        .find(|name| is_akamai_fronting_name(name))
+        .filter(|name| is_akamai_fronting_name(name))
         .cloned()
-        .unwrap_or_else(|| "a248.e.akamai.net".to_string());
+        .collect();
+    for name in cdn_fronting_sni() {
+        if is_akamai_fronting_name(name) {
+            let owned = name.to_string();
+            if !edge_sni_pool.contains(&owned) {
+                edge_sni_pool.push(owned);
+            }
+        }
+    }
+    if edge_sni_pool.is_empty() {
+        edge_sni_pool.push("a248.e.akamai.net".to_string());
+    }
+    let edge_sni_for = |index: usize| edge_sni_pool[index % edge_sni_pool.len()].clone();
 
     // Curated edges first, then whatever the in-app scanner found, deduped.
     let mut addresses: Vec<String> = IR_PROVEN_CDN_IPS
@@ -513,16 +530,27 @@ fn put_cdn_fronting(map: &mut serde_json::Map<String, serde_json::Value>) {
     }));
 
     let mut forced: Vec<String> = Vec::new();
+    let mut sni_index = 0usize;
     for (i, ip) in REFERENCE_DIAL_EDGES.iter().enumerate() {
         forced.push(ip.to_string());
-        overrides.push(fronting_edge_override(&format!("edge-ref-{i}"), ip, &edge_sni));
+        overrides.push(fronting_edge_override(
+            &format!("edge-ref-{i}"),
+            ip,
+            &edge_sni_for(sni_index),
+        ));
+        sni_index += 1;
     }
     for (i, ip) in IR_PROVEN_CDN_IPS.iter().enumerate() {
         if forced.contains(&ip.to_string()) {
             continue;
         }
         forced.push(ip.to_string());
-        overrides.push(fronting_edge_override(&format!("edge-cur-{i}"), ip, &edge_sni));
+        overrides.push(fronting_edge_override(
+            &format!("edge-cur-{i}"),
+            ip,
+            &edge_sni_for(sni_index),
+        ));
+        sni_index += 1;
     }
 
     map.insert(
@@ -680,19 +708,33 @@ fn build_config(
         serde_json::Value::from(SERVER_LIST_SIGNATURE_KEY),
     );
 
+    // Indistinguishable TLS for direct dials, and the datastore migration the
+    // reference clients set — without it every start logs boltdb migration
+    // warnings against an already-migrated store.
+    map.insert("UseIndistinguishableTLS".into(), serde_json::Value::from(true));
     map.insert(
-        "InproxyTunnelProtocolPreferProbability".into(),
-        serde_json::json!(0.0),
-    );
-    map.insert(
-        "InproxyTunnelProtocolSelectionProbability".into(),
-        serde_json::json!(0.0),
+        "MigrateDataStoreDirectory".into(),
+        serde_json::Value::from(state.to_string_lossy().to_string()),
     );
 
     put_cdn_fronting(&mut map);
 
     match (upstream.is_some(), chosen) {
         (true, _) => {
+            // Chained over a socks upstream: in-proxy's WebRTC/UDP cannot cross
+            // it, so pin the probabilities to zero here — and only here. The
+            // reference clients never zero them unconditionally; on this
+            // network the in-proxy (WebRTC/Conduit) path is what connects
+            // first without a VPN, and zeroing it globally was blocking that
+            // route entirely.
+            map.insert(
+                "InproxyTunnelProtocolPreferProbability".into(),
+                serde_json::json!(0.0),
+            );
+            map.insert(
+                "InproxyTunnelProtocolSelectionProbability".into(),
+                serde_json::json!(0.0),
+            );
             map.insert(
                 "LimitTunnelProtocols".into(),
                 serde_json::json!(chained_protocols(chosen)),
@@ -702,10 +744,11 @@ fn build_config(
             }
         }
         (false, Shape::Auto) => {
-            map.insert(
-                "LimitTunnelProtocols".into(),
-                serde_json::json!(NON_INPROXY_PROTOCOLS),
-            );
+            // No protocol limit at all: psiphon picks, including the in-proxy
+            // WebRTC protocols and tactics-sourced broker specs — the exact
+            // default path Se7en/ShirOKhorshid connect with first. Our old
+            // NON_INPROXY pin here made "auto" a direct-only mode on a
+            // network where direct server IPs are blocked.
         }
         (false, Shape::Cdn) => {
             map.insert(
@@ -721,6 +764,13 @@ fn build_config(
             );
             map.insert("DisableTactics".into(), serde_json::Value::from(true));
         }
+    }
+
+    // Standalone (no socks upstream): hammer establishment like the reference
+    // client's beast mode — 30+ workers racing servers instead of politely
+    // walking the list.
+    if upstream.is_none() {
+        map.insert("AggressiveEstablishment".into(), serde_json::Value::from(true));
     }
 
     if let Some(given) = read_base_config()? {
@@ -1575,9 +1625,23 @@ mod tests {
             .find(|o| o["OverrideID"].as_str() == Some("edge-ref-0"))
             .expect("first reference edge");
         assert_eq!(first_edge["DialAddresses"][0], "23.215.0.206");
-        // The user's Azure SNI must be ignored for edge dials; the Akamai
-        // fronting name is what the psiphon Host routes under.
+        // The user's Azure SNI must be ignored for edge dials; the pool starts
+        // at the Akamai fronting name the psiphon Host routes under.
         assert_eq!(first_edge["SNIServerName"], "a248.e.akamai.net");
+
+        // And the pool rotates: the second edge must present a *different*
+        // Akamai-family name, because the reference client's winning pair on
+        // this network was a.akamaized-staging.net — a single SNI forced onto
+        // every edge leaves whichever name is broken blocking all of them.
+        let second_edge = overrides
+            .iter()
+            .find(|o| o["OverrideID"].as_str() == Some("edge-ref-1"))
+            .expect("second reference edge");
+        assert_eq!(second_edge["SNIServerName"], "a77.net.akamai.net");
+        assert_ne!(
+            first_edge["SNIServerName"], second_edge["SNIServerName"],
+            "edge SNIs must rotate across the Akamai pool"
+        );
         assert!(first_edge["VerifyServerNames"]
             .as_array()
             .expect("verify list")
@@ -1591,6 +1655,64 @@ mod tests {
         std::env::remove_var("AETHER_PSIPHON_MODE");
         std::env::remove_var("AETHER_PSIPHON_CDN_IPS");
         std::env::remove_var("AETHER_PSIPHON_CDN_SNI");
+        clear();
+    }
+
+    #[test]
+    fn standalone_auto_leaves_the_protocol_choice_to_psiphon() {
+        let _held = hold();
+
+        clear();
+        let dir = std::env::temp_dir();
+        let text = build_config(
+            &dir,
+            "127.0.0.1:1821".parse().expect("an address"),
+            None,
+            None,
+            Shape::Auto,
+        )
+        .expect("a config");
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+
+        // The path the reference clients connect with first on this network:
+        // no LimitTunnelProtocols pin, in-proxy probabilities left at psiphon's
+        // defaults (so WebRTC/Conduit and tactics broker specs are in play),
+        // and aggressive establishment.
+        assert!(
+            parsed.get("LimitTunnelProtocols").is_none(),
+            "standalone auto must not pin the protocol list"
+        );
+        assert!(
+            parsed.get("InproxyTunnelProtocolSelectionProbability").is_none(),
+            "standalone auto must not zero in-proxy"
+        );
+        assert_eq!(parsed.get("DisableTactics"), None);
+        assert_eq!(parsed["AggressiveEstablishment"], true);
+
+        clear();
+    }
+
+    #[test]
+    fn chained_over_upstream_still_zeroes_in_proxy() {
+        let _held = hold();
+
+        clear();
+        let dir = std::env::temp_dir();
+        let text = build_config(
+            &dir,
+            "127.0.0.1:1821".parse().expect("an address"),
+            None,
+            Some("127.0.0.1:1819".parse().expect("an address")),
+            Shape::Auto,
+        )
+        .expect("a config");
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+
+        // WebRTC/UDP cannot cross a socks5 hop, so the chained case keeps the
+        // zero — it is the only case that gets it.
+        assert_eq!(parsed["InproxyTunnelProtocolSelectionProbability"], 0.0);
+        assert!(parsed.get("LimitTunnelProtocols").is_some());
+
         clear();
     }
 
