@@ -115,3 +115,34 @@ jobs:
           Write-Host "annotated $found failing test line(s)"
           exit 0
 
+      # `cargo fmt --check` fails on formatting alone and prints a plain diff,
+      # which the step above does not capture, so run it separately and name the
+      # files it wants rewritten.
+      - name: Report the formatting diff as annotations
+        shell: pwsh
+        working-directory: aether
+        run: |
+          cargo fmt --check 2>&1 | Tee-Object -FilePath ../fmt-output.txt | Out-Null
+          exit 0
+
+      - name: Annotate the files fmt wants changed
+        shell: pwsh
+        working-directory: .
+        run: |
+          $out = Get-Content fmt-output.txt -Raw
+          $files = @{}
+          foreach ($line in ($out -split "`r?`n")) {
+            if ($line -match '^Diff in (.+?) at line') {
+              $path = $Matches[1] -replace '\\', '/'
+              $files[$path] = $true
+            }
+          }
+          if ($files.Count -eq 0) {
+            Write-Host "::notice title=Formatting::cargo fmt reported no file needing changes"
+            exit 0
+          }
+          foreach ($path in ($files.Keys | Sort-Object)) {
+            Write-Host "::error file=$path,title=Needs rustfmt::cargo fmt wants to rewrite this file"
+          }
+          exit 0
+
