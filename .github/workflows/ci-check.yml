@@ -1,0 +1,87 @@
+name: ci-check
+
+# Fast verification lane: type-checks and runs the library tests without
+# producing a binary. The full `release` workflow builds every platform and
+# needs Go, NASM and the pluggable transports, which is a lot of machinery for
+# the question "does this still compile and do the unit tests still pass".
+# Trigger: Actions tab -> ci-check -> Run workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "aether/src/**"
+      - "aether/Cargo.toml"
+      - "aether/Cargo.lock"
+      - "quiche/quiche/**"
+      - "quiche/octets/**"
+      - ".github/workflows/ci-check.yml"
+  pull_request:
+    paths:
+      - "aether/src/**"
+      - "aether/Cargo.toml"
+      - "aether/Cargo.lock"
+      - "quiche/quiche/**"
+      - "quiche/octets/**"
+      - ".github/workflows/ci-check.yml"
+
+permissions:
+  contents: read
+
+# One run at a time; a newer push cancels the queued older run.
+concurrency:
+  group: ci-check
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  check:
+    name: cargo check + lib tests
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: aether
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # BoringSSL (through `boring` and `quiche`) is built from source, so the
+      # C toolchain and CMake have to be present before cargo is invoked.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build nasm perl
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            aether
+          key: ci-check
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@v1.10.2
+
+      - name: Type-check every target
+        run: cargo check --locked --all-targets
+
+      - name: Run the library tests
+        run: cargo test --locked --lib
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings

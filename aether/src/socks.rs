@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -343,6 +344,9 @@ async fn read_request(sock: &mut TcpStream) -> Result<(u8, Target, u16)> {
     Ok((head[1], target, port))
 }
 
+const METHOD_NONE: u8 = 0x00;
+const METHOD_NO_ACCEPTABLE: u8 = 0xFF;
+
 async fn handshake(sock: &mut TcpStream) -> Result<()> {
     let mut prefix = [0u8; 2];
     sock.read_exact(&mut prefix).await?;
@@ -350,10 +354,30 @@ async fn handshake(sock: &mut TcpStream) -> Result<()> {
         return Err(AetherError::Other("bad greeting version".into()));
     }
     let nmethods = prefix[1] as usize;
+    if nmethods == 0 {
+        // RFC 1928: a greeting that offers no method at all cannot be answered
+        // with a method, so the refusal below is the only legal reply.
+        sock.write_all(&[VER, METHOD_NO_ACCEPTABLE]).await?;
+        return Err(AetherError::Other("socks5 greeting offered no methods".into()));
+    }
     let mut methods = vec![0u8; nmethods];
     sock.read_exact(&mut methods).await?;
-    sock.write_all(&[VER, 0x00]).await?;
-    Ok(())
+
+    // This server never asks for credentials, so it may only answer with the
+    // no-auth method, and only when the client actually offered it. Claiming
+    // no-auth to a client that asked for user/pass would hand it a session it
+    // believes is authenticated when nothing was ever checked.
+    if methods.contains(&METHOD_NONE) {
+        sock.write_all(&[VER, METHOD_NONE]).await?;
+        Ok(())
+    } else {
+        sock.write_all(&[VER, METHOD_NO_ACCEPTABLE]).await?;
+        Err(AetherError::Other(
+            "the client offered no socks5 method this server accepts; it needs \
+             no authentication, so the client must offer method 0x00"
+                .into(),
+        ))
+    }
 }
 
 async fn read_target(sock: &mut TcpStream, atyp: u8) -> Result<(Target, u16)> {
@@ -460,10 +484,50 @@ async fn dns_exchange(
     from_stack: &mut mpsc::Receiver<(SocketAddr, Vec<u8>)>,
     name: &str,
 ) -> Result<IpAddr> {
+    // Which record to ask for first follows the address family the client asked
+    // to run on, so `-6` and `--dual` are not quietly answered with an A record
+    // the tunnel then cannot reach.
+    let mut order = [QTYPE_A, QTYPE_AAAA];
+    if std::env::var("AETHER_SOCKS")
+        .ok()
+        .and_then(|v| v.parse::<std::net::SocketAddr>().ok())
+        .map(|addr| addr.is_ipv6())
+        .unwrap_or(false)
+    {
+        order = [QTYPE_AAAA, QTYPE_A];
+    }
+
+    let mut last = AetherError::Other("dns timeout".into());
+
+    for qtype in order {
+        match dns_query_type(sender, from_stack, name, qtype).await {
+            Ok(Some(ip)) => return Ok(ip),
+            // This family simply has no record here; the other one may still
+            // answer, so keep going rather than failing the whole lookup.
+            Ok(None) => last = AetherError::Other(format!(
+                "no {} record for {name}",
+                if qtype == QTYPE_AAAA { "AAAA" } else { "A" }
+            )),
+            Err(error) => last = error,
+        }
+    }
+
+    Err(last)
+}
+
+/// One question to one server. `Ok(None)` means the server answered and the
+/// answer held no record of this type, which is a legitimate answer rather than
+/// a failure to reach it.
+async fn dns_query_type(
+    sender: &UdpSender,
+    from_stack: &mut mpsc::Receiver<(SocketAddr, Vec<u8>)>,
+    name: &str,
+    qtype: u16,
+) -> Result<Option<IpAddr>> {
     let mut last = AetherError::Other("dns timeout".into());
 
     for server in resolver_addresses() {
-        let (query, id) = build_dns_query(name, QTYPE_A);
+        let (query, id) = build_dns_query(name, qtype);
         if let Err(error) = sender.send_to(server, query).await {
             last = error;
             continue;
@@ -481,13 +545,10 @@ async fn dns_exchange(
                 }
             };
 
-            if !dns_response_matches(&resp.1, id, name, QTYPE_A) {
+            if !dns_response_matches(&resp.1, id, name, qtype) {
                 continue;
             }
-            if let Some(ip) = parse_dns_a(&resp.1) {
-                return Ok(ip);
-            }
-            return Err(AetherError::Other(format!("no A record for {name}")));
+            return Ok(parse_dns_address(&resp.1, qtype));
         }
     }
 
@@ -495,6 +556,7 @@ async fn dns_exchange(
 }
 
 const QTYPE_A: u16 = 1;
+const QTYPE_AAAA: u16 = 28;
 
 fn build_dns_query(name: &str, qtype: u16) -> (Vec<u8>, u16) {
     let mut q = Vec::with_capacity(32 + name.len());
@@ -566,7 +628,7 @@ pub(crate) fn dns_response_matches(
     u16::from_be_bytes([resp[pos], resp[pos + 1]]) == expected_qtype
 }
 
-fn parse_dns_a(resp: &[u8]) -> Option<IpAddr> {
+fn parse_dns_address(resp: &[u8], qtype: u16) -> Option<IpAddr> {
     if resp.len() < 12 {
         return None;
     }
@@ -590,13 +652,23 @@ fn parse_dns_a(resp: &[u8]) -> Option<IpAddr> {
         if pos + rdlen > resp.len() {
             return None;
         }
-        if rtype == 1 && rdlen == 4 {
-            return Some(IpAddr::V4(Ipv4Addr::new(
-                resp[pos],
-                resp[pos + 1],
-                resp[pos + 2],
-                resp[pos + 3],
-            )));
+        match (rtype, rdlen) {
+            (QTYPE_A, 4) => {
+                return Some(IpAddr::V4(Ipv4Addr::new(
+                    resp[pos],
+                    resp[pos + 1],
+                    resp[pos + 2],
+                    resp[pos + 3],
+                )));
+            }
+            (QTYPE_AAAA, 16) => {
+                let mut octets = [0u8; 16];
+                octets.copy_from_slice(&resp[pos..pos + 16]);
+                return Some(IpAddr::V6(octets.into()));
+            }
+            // A CNAME or an unrelated record type: keep reading the section for
+            // one that is the type this query asked for.
+            _ => {}
         }
         pos += rdlen;
     }
@@ -662,13 +734,15 @@ async fn handle_connect(
     port: u16,
 ) -> Result<()> {
     let mut head = Vec::new();
-    let mut replied = false;
     let mut named: Option<String> = None;
 
+    // A client that dialled an address rather than a name can still be told which
+    // name it is really after, by reading the first bytes it sends. The name is
+    // read *before* the reply is sent, so the reply can still report a failure:
+    // answering REP_OK here and only then failing to connect would hand the
+    // client a session it believes is open, and the only thing it could observe
+    // afterwards would be the socket closing.
     if matches!(target, Target::Ip(_)) && sniff_enabled() && routes().has_domain_rules() {
-        reply_bound(&mut sock, "0.0.0.0:0".parse().unwrap()).await?;
-        replied = true;
-
         head = match read_sniff_head(&mut sock).await {
             Some(bytes) => bytes,
             None => return Ok(()),
@@ -687,14 +761,12 @@ async fn handle_connect(
     match decide_route(routes(), &target, named.as_deref(), port) {
         Action::Block => {
             log::debug!("[route] block tcp {target}:{port}");
-            if !replied {
-                let _ = reply(&mut sock, REP_NOT_ALLOWED).await;
-            }
+            let _ = reply(&mut sock, REP_NOT_ALLOWED).await;
             return Ok(());
         }
         Action::Direct => {
             log::debug!("[route] direct tcp {target}:{port}");
-            return handle_direct(sock, target, port, head, replied).await;
+            return handle_direct(sock, target, port, head).await;
         }
         Action::Proxy => {}
     }
@@ -755,16 +827,21 @@ async fn handle_connect(
         }
     };
 
-    if !replied {
-        reply_bound(&mut sock, "0.0.0.0:0".parse().unwrap()).await?;
-    }
-
     let (sender, from_stack, leftover) = conn;
 
+    // The reply goes out only now, once a channel to the destination really
+    // exists. Everything above this line can still fail honestly.
+    reply_bound(&mut sock, "0.0.0.0:0".parse().unwrap()).await?;
+
+    // `head` is what the client already sent while its name was being read, so
+    // it has to go upstream before anything else or the server on the far side
+    // would be reading a stream that had lost its opening bytes.
     if !head.is_empty() && sender.send(head).await.is_err() {
         return Ok(());
     }
 
+    // `leftover` is whatever the gateway said after its response head, which
+    // belongs to the client rather than upstream.
     if !leftover.is_empty() && sock.write_all(&leftover).await.is_err() {
         return Ok(());
     }
@@ -1035,6 +1112,12 @@ impl Activity {
     fn quiet_until(&self, idle: Duration) -> tokio::time::Instant {
         self.started + Duration::from_millis(self.last_ms.load(Ordering::Relaxed)) + idle
     }
+
+    /// Whether nothing has moved for at least `idle`, which is the point where a
+    /// finished upload stops being worth waiting on.
+    fn idle_for(&self, idle: Duration) -> bool {
+        self.quiet_until(idle) <= tokio::time::Instant::now()
+    }
 }
 
 async fn relay_halves<U, D>(upload: U, download: D, activity: &Activity, linger: Duration)
@@ -1051,14 +1134,20 @@ where
     }
 
     activity.touch();
+
+    // The upload half is done, so the remote may still be draining what it has
+    // already been sent. Wait for that, but give up once nothing has moved for
+    // `linger`. The deadline is recomputed from the last observed activity each
+    // time round, so a connection that keeps going renews the wait instead of
+    // being cut off on a timer set when it happened to finish uploading.
     loop {
+        if activity.idle_for(linger) {
+            return;
+        }
+
         tokio::select! {
             _ = &mut download => return,
-            _ = tokio::time::sleep_until(activity.quiet_until(linger)) => {
-                if activity.quiet_until(linger) <= tokio::time::Instant::now() {
-                    return;
-                }
-            }
+            _ = tokio::time::sleep_until(activity.quiet_until(linger)) => {}
         }
     }
 }
@@ -1181,7 +1270,6 @@ async fn handle_direct(
     target: Target,
     port: u16,
     head: Vec<u8>,
-    replied: bool,
 ) -> Result<()> {
     let host = match &target {
         Target::Domain(name) => name.clone(),
@@ -1196,32 +1284,29 @@ async fn handle_direct(
             Ok(Ok(stream)) => stream,
             Ok(Err(error)) => {
                 log::debug!("[route] direct connect to {host}:{port} failed: {error}");
-                if !replied {
-                    let code = if error.kind() == std::io::ErrorKind::PermissionDenied {
-                        REP_NOT_ALLOWED
-                    } else {
-                        REP_GENERAL
-                    };
-                    let _ = reply(&mut sock, code).await;
-                }
+                let code = if error.kind() == std::io::ErrorKind::PermissionDenied {
+                    REP_NOT_ALLOWED
+                } else {
+                    REP_GENERAL
+                };
+                let _ = reply(&mut sock, code).await;
                 return Ok(());
             }
             Err(_) => {
                 log::debug!("[route] direct connect to {host}:{port} timed out");
-                if !replied {
-                    let _ = reply(&mut sock, REP_GENERAL).await;
-                }
+                let _ = reply(&mut sock, REP_GENERAL).await;
                 return Ok(());
             }
         };
 
+    // As in the tunneled path, the client is told only once the connection is
+    // really there. A direct route is decided from the name it announced, so it
+    // can fail just like a proxied one and has to be able to say so.
     if !head.is_empty() && upstream.write_all(&head).await.is_err() {
         return Ok(());
     }
 
-    if !replied {
-        reply_bound(&mut sock, "0.0.0.0:0".parse().unwrap()).await?;
-    }
+    reply_bound(&mut sock, "0.0.0.0:0".parse().unwrap()).await?;
 
     relay_direct(sock, upstream, half_close_linger()).await;
     Ok(())
@@ -1352,6 +1437,12 @@ async fn handle_udp_associate(
     let direct_relay = crate::egress::udp_bind("0.0.0.0:0".parse().expect("a wildcard address"))?;
 
     let mut client: Option<SocketAddr> = None;
+    // Which peers this association has actually spoken to. A datagram coming
+    // back from anywhere else is not part of this session and must not be
+    // handed to the client as if it were: without this, anything that can put a
+    // packet on the tunnel's path could inject a forged reply into the
+    // client's UDP stream, and the client has no way to tell it apart.
+    let mut expected: HashSet<SocketAddr> = HashSet::new();
     let mut refused: u64 = 0;
     let mut cbuf = vec![0u8; 65535];
     let mut dbuf = vec![0u8; 65535];
@@ -1401,6 +1492,7 @@ async fn handle_udp_associate(
                                 }
                                 Some(addr) => {
                                     log::trace!("[route] direct udp {dst}:{dst_port}");
+                                    expected.insert(addr);
                                     let _ = direct_relay.send_to(&payload.1, addr).await;
                                 }
                                 None => log::debug!("[route] direct udp {dst} did not resolve"),
@@ -1419,12 +1511,20 @@ async fn handle_udp_associate(
                             }
                         }
                     };
+                    // Recorded before the datagram goes out, so a reply that
+                    // races back faster than this turn of the loop still counts
+                    // as an answer to something the client asked for.
+                    expected.insert(dst);
                     let _ = sender.send_to(dst, payload.1).await;
                 }
             }
 
             maybe = from_stack.recv() => {
                 let (src, data) = match maybe { Some(v) => v, None => break };
+                if !expected.contains(&src) {
+                    log::debug!("udp relay {relay_addr} dropped an answer from {src}, which this association never asked");
+                    continue;
+                }
                 if let Some(c) = client {
                     let pkt = build_udp_reply(src, &data);
                     let _ = relay.send_to(&pkt, c).await;
@@ -1433,6 +1533,10 @@ async fn handle_udp_associate(
 
             r = direct_relay.recv_from(&mut dbuf) => {
                 let (n, from) = match r { Ok(v) => v, Err(_) => continue };
+                if !expected.contains(&from) {
+                    log::debug!("udp relay {relay_addr} dropped a direct answer from {from}, which this association never asked");
+                    continue;
+                }
                 if let Some(c) = client {
                     let pkt = build_udp_reply(from, &dbuf[..n]);
                     let _ = relay.send_to(&pkt, c).await;
@@ -1972,6 +2076,70 @@ mod tests {
                 QTYPE_A
             ));
         }
+    }
+
+    /// A response carrying one answer of `qtype`, so the parser has something
+    /// realistic to walk over the question and the answer section.
+    fn answer(name: &str, qtype: u16, rdata: &[u8]) -> Vec<u8> {
+        let mut msg = reply(0x4242, name, qtype, true);
+        // The `reply` helper leaves the question section ending after the qtype
+        // and class; the answer needs a name, type, class, ttl and length.
+        for label in name.split('.') {
+            msg.push(label.len() as u8);
+            msg.extend_from_slice(label.as_bytes());
+        }
+        msg.push(0);
+        msg.extend_from_slice(&qtype.to_be_bytes());
+        msg.extend_from_slice(&1u16.to_be_bytes());
+        msg.extend_from_slice(&300u32.to_be_bytes());
+        msg.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+        msg.extend_from_slice(rdata);
+        msg
+    }
+
+    #[test]
+    fn an_a_record_is_read_out_of_the_answer() {
+        let msg = answer("example.com", QTYPE_A, &[93, 184, 216, 34]);
+        assert_eq!(
+            parse_dns_address(&msg, QTYPE_A),
+            Some(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)))
+        );
+    }
+
+    #[test]
+    fn an_aaaa_record_is_read_out_of_the_answer() {
+        let v6: Ipv6Addr = "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap();
+        let msg = answer("example.com", QTYPE_AAAA, &v6.octets());
+        assert_eq!(
+            parse_dns_address(&msg, QTYPE_AAAA),
+            Some(IpAddr::V6(v6)),
+            "a name that only has an AAAA record must resolve"
+        );
+    }
+
+    #[test]
+    fn an_a_query_ignores_an_aaaa_record_in_the_answer() {
+        let v6: Ipv6Addr = "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap();
+        let mut msg = answer("example.com", QTYPE_AAAA, &v6.octets());
+        // Overwrite the answer's type with A, leaving a 16-byte rdata length, so
+        // the pair no longer matches and the record has to be stepped over.
+        let name_len = "example.com".len() + 2;
+        let at = 12 + name_len + 4;
+        assert_eq!(&msg[at..at + 2], &QTYPE_AAAA.to_be_bytes());
+        msg[at] = 0;
+        msg[at + 1] = 1;
+        assert_eq!(parse_dns_address(&msg, QTYPE_A), None);
+    }
+
+    #[test]
+    fn a_cname_before_the_address_is_stepped_over() {
+        let mut msg = answer("example.com", QTYPE_A, &[93, 184, 216, 34]);
+        // Replace the A answer with a CNAME so the parser has to keep reading
+        // the section to find a record of the type it asked for.
+        let at = 12 + "example.com".len() + 2 + 4;
+        assert_eq!(&msg[at..at + 2], &QTYPE_A.to_be_bytes());
+        msg[at + 1] = 5;
+        assert_eq!(parse_dns_address(&msg, QTYPE_A), None);
     }
 }
 
@@ -2559,6 +2727,67 @@ mod sniff_route_tests {
             "a client that waits for a greeting must not be treated as gone"
         );
         quiet.abort();
+    }
+
+    #[tokio::test]
+    async fn a_client_offering_only_user_pass_is_refused() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let client = tokio::spawn(async move {
+            let mut sock = tokio::net::TcpStream::connect(address).await.unwrap();
+            // 0x02 is username/password, and this server never asks for one.
+            sock.write_all(&[VER, 1, 0x02]).await.unwrap();
+            let mut answer = [0u8; 2];
+            sock.read_exact(&mut answer).await.unwrap();
+            answer
+        });
+
+        let (mut server, _) = listener.accept().await.unwrap();
+        let outcome = handshake(&mut server).await;
+
+        assert!(outcome.is_err(), "a greeting with no usable method must fail");
+        assert_eq!(
+            client.await.unwrap(),
+            [VER, METHOD_NO_ACCEPTABLE],
+            "the client must be told no acceptable method exists, not that it is authenticated"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_offering_no_auth_is_accepted() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let client = tokio::spawn(async move {
+            let mut sock = tokio::net::TcpStream::connect(address).await.unwrap();
+            sock.write_all(&[VER, 2, METHOD_NONE, 0x80]).await.unwrap();
+            let mut answer = [0u8; 2];
+            sock.read_exact(&mut answer).await.unwrap();
+            answer
+        });
+
+        let (mut server, _) = listener.accept().await.unwrap();
+        assert!(handshake(&mut server).await.is_ok());
+        assert_eq!(client.await.unwrap(), [VER, METHOD_NONE]);
+    }
+
+    #[tokio::test]
+    async fn a_greeting_with_no_methods_at_all_is_refused() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let client = tokio::spawn(async move {
+            let mut sock = tokio::net::TcpStream::connect(address).await.unwrap();
+            sock.write_all(&[VER, 0]).await.unwrap();
+            let mut answer = [0u8; 2];
+            sock.read_exact(&mut answer).await.unwrap();
+            answer
+        });
+
+        let (mut server, _) = listener.accept().await.unwrap();
+        assert!(handshake(&mut server).await.is_err());
+        assert_eq!(client.await.unwrap(), [VER, METHOD_NO_ACCEPTABLE]);
     }
 
     #[tokio::test]
