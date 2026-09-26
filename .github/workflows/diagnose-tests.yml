@@ -115,34 +115,64 @@ jobs:
           Write-Host "annotated $found failing test line(s)"
           exit 0
 
-      # `cargo fmt --check` fails on formatting alone and prints a plain diff,
-      # which the step above does not capture, so run it separately and name the
-      # files it wants rewritten.
-      - name: Report the formatting diff as annotations
+      # `cargo fmt --check` and `clippy` fail on style alone and print a diff or
+      # a lint list, neither of which the test step above captures, so run each
+      # one and name what it objects to. Colours are off so the output can be
+      # matched, and neither step is allowed to fail the job: the annotations
+      # are the point of this workflow.
+      - name: Run fmt and clippy, capturing what each objects to
         shell: pwsh
         working-directory: aether
         run: |
-          cargo fmt --check 2>&1 | Tee-Object -FilePath ../fmt-output.txt | Out-Null
+          $env:CARGO_TERM_COLOR = "never"
+          cargo fmt --check 2>&1 | Out-File -Encoding utf8 ../fmt-output.txt
+          cargo clippy --all-targets -- -D warnings 2>&1 | Out-File -Encoding utf8 ../clippy-output.txt
           exit 0
 
-      - name: Annotate the files fmt wants changed
+      - name: Annotate what fmt and clippy objected to
         shell: pwsh
         working-directory: .
         run: |
-          $out = Get-Content fmt-output.txt -Raw
-          $files = @{}
-          foreach ($line in ($out -split "`r?`n")) {
-            if ($line -match '^Diff in (.+?) at line') {
-              $path = $Matches[1] -replace '\\', '/'
-              $files[$path] = $true
+          # rustfmt writes `Diff in <path> at line <n>:`, one block per hunk.
+          $fmt = Get-Content fmt-output.txt -Raw
+          $hunks = [regex]::Matches($fmt, 'Diff in ([^\r\n]+?) at line (\d+)')
+          if ($hunks.Count -eq 0) {
+            Write-Host "::notice title=Formatting::cargo fmt reported no file needing changes"
+          }
+          foreach ($h in $hunks) {
+            $path = ($h.Groups[1].Value -replace '\\', '/')
+            $line = $h.Groups[2].Value
+            Write-Host "::error file=$path,title=Needs rustfmt::line $line"
+          }
+
+          # clippy, with -D warnings, reports each lint as
+          # `warning: message` / `error: message` followed by `--> path:line:col`.
+          $lint = Get-Content clippy-output.txt -Raw
+          $lines = $lint -split "`r?`n"
+          $count = 0
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^(error|warning)(\[E\d+\])?: (.+)$') {
+              $msg = $Matches[3]
+              $where = $null
+              for ($j = $i + 1; $j -lt [Math]::Min($i + 10, $lines.Count); $j++) {
+                if ($lines[$j] -match '^\s*--> ([^:]+):(\d+):(\d+)') {
+                  $where = @{ path = $Matches[1] -replace '\\', '/'; line = $Matches[2] }
+                  break
+                }
+                if ($lines[$j] -match '^\s*(Checking|Compiling|Finished|error\[)') { break }
+              }
+              if ($msg -notmatch '^aborting due to' -and
+                  $msg -notmatch '^\d+ warning' -and
+                  $msg -notmatch 'generated \d+ warning') {
+                $count++
+                $file = if ($where) { $where.path } else { "aether/src/lib.rs" }
+                $at = if ($where) { $where.line } else { "1" }
+                Write-Host "::error file=$file,title=Clippy::$msg at line $at"
+              }
             }
           }
-          if ($files.Count -eq 0) {
-            Write-Host "::notice title=Formatting::cargo fmt reported no file needing changes"
-            exit 0
-          }
-          foreach ($path in ($files.Keys | Sort-Object)) {
-            Write-Host "::error file=$path,title=Needs rustfmt::cargo fmt wants to rewrite this file"
+          if ($count -eq 0) {
+            Write-Host "::notice title=Clippy::clippy reported nothing"
           }
           exit 0
 
