@@ -1649,8 +1649,21 @@ mod tests {
             .any(|v| v == "www.akamai.com"));
 
         // The user's scanned IPs reach the scan spec; the forced overrides
-        // stay on CDN edges whose certificates can actually verify.
-        assert_eq!(parsed["FrontedMeekCDNScanSpec"]["IPCandidates"][0], "9.9.9.9");
+        // stay on CDN edges whose certificates can actually verify. The
+        // curated Iran-proven list leads and the user's own IP joins it, so
+        // this asks whether it is present rather than where it landed.
+        let candidates = parsed["FrontedMeekCDNScanSpec"]["IPCandidates"]
+            .as_array()
+            .expect("candidate array");
+        assert!(
+            candidates.iter().any(|v| v == "9.9.9.9"),
+            "the user's scanned IP must reach the scan spec, got {candidates:?}"
+        );
+        assert_eq!(
+            candidates.first().and_then(|v| v.as_str()),
+            Some(IR_PROVEN_CDN_IPS[0]),
+            "the curated list leads the candidates"
+        );
 
         std::env::remove_var("AETHER_PSIPHON_MODE");
         std::env::remove_var("AETHER_PSIPHON_CDN_IPS");

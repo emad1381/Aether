@@ -87,6 +87,14 @@ jobs:
             }
           }
 
+          # The per-test tally, so a green run says how much actually ran
+          # rather than leaving the count to be inferred from the log.
+          foreach ($line in ($out -split "`r?`n")) {
+            if ($line -match '^\s*test result:') {
+              Write-Host "::notice title=Test tally::$($line.Trim())"
+            }
+          }
+
           Write-Host "annotated $found failure line(s)"
           if ($found -eq 0) {
             Write-Host "::error file=aether/src/lib.rs,title=No failure lines parsed::the run failed but no failures: block was found; the test binary may not have run at all"
