@@ -1,0 +1,89 @@
+name: diagnose-tests
+
+# Temporary: runs the library tests and republishes every failing test name as
+# a check annotation. Annotations are readable from the public REST API, so the
+# diagnosis does not need a signed-in session the way the raw logs do.
+# Once the suite is green again this workflow can go.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "aether/src/**"
+      - ".github/workflows/diagnose-tests.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-tests
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  diagnose:
+    name: find the failing tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: aether
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            aether
+            aether-gui/src-tauri
+          key: diagnose-tests
+
+      - name: Install CMake and Ninja
+        uses: lukka/get-cmake@latest
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      # `--no-fail-fast` so one broken test does not hide the rest, and `|| true`
+      # so the reporting step below always runs.
+      - name: Run the library tests
+        run: cargo test --lib --no-fail-fast 2>&1 | tee ../test-output.txt; exit 0
+
+      - name: Report each failing test as an annotation
+        shell: pwsh
+        run: |
+          $out = Get-Content test-output.txt -Raw
+          $found = 0
+
+          # The failure list cargo prints between `failures:` and the next blank
+          # section names every test that did not pass, so that is the list worth
+          # reading from the API.
+          $inBlock = $false
+          foreach ($line in ($out -split "`r?`n")) {
+            if ($line -match '^\s*failures:\s*$') { $inBlock = $true; continue }
+            if ($inBlock -and $line -match '^\s*test result:') { $inBlock = $false }
+            if ($inBlock -and $line -match '^\s{4}\S') {
+              $found++
+              Write-Host "::error title=Failing test::$($line.Trim())"
+            }
+          }
+
+          # A panic outside a test body prints its message and source location
+          # rather than a test name, so surface those too.
+          foreach ($line in ($out -split "`r?`n")) {
+            if ($line -match 'panicked at (.+)$') {
+              $found++
+              Write-Host "::error title=Panic::$($Matches[1])"
+            }
+          }
+
+          Write-Host "annotated $found failure line(s)"
