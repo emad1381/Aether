@@ -60,6 +60,7 @@ jobs:
 
       - name: Report each failing test as an annotation
         shell: pwsh
+        working-directory: .
         run: |
           $out = Get-Content test-output.txt -Raw
           $found = 0
@@ -73,7 +74,7 @@ jobs:
             if ($inBlock -and $line -match '^\s*test result:') { $inBlock = $false }
             if ($inBlock -and $line -match '^\s{4}\S') {
               $found++
-              Write-Host "::error title=Failing test::$($line.Trim())"
+              Write-Host "::error file=aether/src/socks.rs,title=Failing test::$($line.Trim())"
             }
           }
 
@@ -82,8 +83,14 @@ jobs:
           foreach ($line in ($out -split "`r?`n")) {
             if ($line -match 'panicked at (.+)$') {
               $found++
-              Write-Host "::error title=Panic::$($Matches[1])"
+              Write-Host "::error file=aether/src/lib.rs,title=Panic::$($Matches[1])"
             }
           }
 
           Write-Host "annotated $found failure line(s)"
+          if ($found -eq 0) {
+            Write-Host "::error file=aether/src/lib.rs,title=No failure lines parsed::the run failed but no failures: block was found; the test binary may not have run at all"
+            exit 1
+          }
+          exit 0
+
