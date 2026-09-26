@@ -91,12 +91,21 @@ jobs:
           # failure, a linker message, a warning promoted by a config, or a
           # build script printing to stderr. Those are the lines that explain a
           # red run whose tally is clean, so report whatever is left over once
-          # the test output itself has been accounted for.
-          foreach ($line in ($out -split "`r?`n")) {
+          # the test output itself has been accounted for. The line that follows
+          # a diagnostic names the file and line it came from, so the source
+          # location is carried along too.
+          $lines = $out -split "`r?`n"
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
             if ($line -match '^\s*(error|warning)(\[|:)' -and
                 $line -notmatch 'generated \d+ warning' -and
                 $line -notmatch '^\s*error: aborting') {
-              Write-Host "::warning file=aether/src/lib.rs,title=Cargo diagnostic::$($line.Trim())"
+              $where = ''
+              for ($j = $i + 1; $j -lt [Math]::Min($i + 12, $lines.Count); $j++) {
+                if ($lines[$j] -match '^\s*--> (.+)$') { $where = $Matches[1]; break }
+                if ($lines[$j] -match '^\s*(Compiling|Running|Finished|error\[)') { break }
+              }
+              Write-Host "::warning file=aether/src/lib.rs,title=Cargo diagnostic::$($line.Trim()) at $where"
             }
             if ($line -match 'test result:') {
               Write-Host "::notice title=Test tally::$($line.Trim())"

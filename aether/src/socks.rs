@@ -653,7 +653,7 @@ fn parse_dns_address(resp: &[u8], qtype: u16) -> Option<IpAddr> {
             return None;
         }
         match (rtype, rdlen) {
-            (QTYPE_A, 4) => {
+            (QTYPE_A, 4) if qtype == QTYPE_A => {
                 return Some(IpAddr::V4(Ipv4Addr::new(
                     resp[pos],
                     resp[pos + 1],
@@ -661,13 +661,15 @@ fn parse_dns_address(resp: &[u8], qtype: u16) -> Option<IpAddr> {
                     resp[pos + 3],
                 )));
             }
-            (QTYPE_AAAA, 16) => {
+            (QTYPE_AAAA, 16) if qtype == QTYPE_AAAA => {
                 let mut octets = [0u8; 16];
                 octets.copy_from_slice(&resp[pos..pos + 16]);
                 return Some(IpAddr::V6(octets.into()));
             }
-            // A CNAME or an unrelated record type: keep reading the section for
-            // one that is the type this query asked for.
+            // A CNAME, or a record of the other family: keep reading the
+            // section for one that is the type this query asked for. Without
+            // the `qtype` guard above, an A query would happily take an AAAA
+            // out of the answer, and vice versa.
             _ => {}
         }
         pos += rdlen;
@@ -2142,6 +2144,23 @@ mod tests {
         assert_eq!(&msg[at..at + 2], &QTYPE_A.to_be_bytes());
         msg[at + 1] = 5;
         assert_eq!(parse_dns_address(&msg, QTYPE_A), None);
+    }
+
+    #[test]
+    fn a_well_formed_record_of_the_other_family_is_still_refused() {
+        // Unlike the test above, this answer is not malformed: the type, the
+        // length and the rdata all agree with each other, they just describe
+        // the family the query did not ask for. Handing an AAAA back to a
+        // query for A would put an address in the socket that the caller never
+        // asked to route to, so the parser has to check the query's own type
+        // rather than only the record's self-consistency.
+        let v6: Ipv6Addr = "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap();
+        let (msg, _) = answer("example.com", QTYPE_AAAA, &v6.octets());
+        assert_eq!(parse_dns_address(&msg, QTYPE_A), None);
+        assert_eq!(parse_dns_address(&msg, QTYPE_AAAA), Some(IpAddr::V6(v6)));
+
+        let (msg, _) = answer("example.com", QTYPE_A, &[93, 184, 216, 34]);
+        assert_eq!(parse_dns_address(&msg, QTYPE_AAAA), None);
     }
 }
 
