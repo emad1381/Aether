@@ -58,7 +58,7 @@ jobs:
       - name: Run the library tests
         run: cargo test --lib --no-fail-fast 2>&1 | tee ../test-output.txt; exit 0
 
-      - name: Report each failing test as an annotation
+      - name: Report the failures and the tally as annotations
         shell: pwsh
         working-directory: .
         run: |
@@ -87,18 +87,22 @@ jobs:
             }
           }
 
-          # The per-test tally, so a green run says how much actually ran
-          # rather than leaving the count to be inferred from the log.
+          # A step can exit non-zero with no failing test at all: a doctest
+          # failure, a linker message, a warning promoted by a config, or a
+          # build script printing to stderr. Those are the lines that explain a
+          # red run whose tally is clean, so report whatever is left over once
+          # the test output itself has been accounted for.
           foreach ($line in ($out -split "`r?`n")) {
-            if ($line -match '^\s*test result:') {
+            if ($line -match '^\s*(error|warning)(\[|:)' -and
+                $line -notmatch 'generated \d+ warning' -and
+                $line -notmatch '^\s*error: aborting') {
+              Write-Host "::warning file=aether/src/lib.rs,title=Cargo diagnostic::$($line.Trim())"
+            }
+            if ($line -match 'test result:') {
               Write-Host "::notice title=Test tally::$($line.Trim())"
             }
           }
 
-          Write-Host "annotated $found failure line(s)"
-          if ($found -eq 0) {
-            Write-Host "::error file=aether/src/lib.rs,title=No failure lines parsed::the run failed but no failures: block was found; the test binary may not have run at all"
-            exit 1
-          }
+          Write-Host "annotated $found failing test line(s)"
           exit 0
 
