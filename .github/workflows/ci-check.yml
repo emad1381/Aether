@@ -1,9 +1,10 @@
 name: ci-check
 
-# Fast verification lane: type-checks and runs the library tests without
-# producing a binary. The full `release` workflow builds every platform and
-# needs Go, NASM and the pluggable transports, which is a lot of machinery for
-# the question "does this still compile and do the unit tests still pass".
+# Fast verification lane for the Windows desktop build only: type-checks the
+# engine, runs the library tests, and builds the GUI that ships next to it.
+# The full `release` workflow also builds macOS, Linux, musl, the Android APK
+# and the Docker image, which is a lot of machinery for the question "does the
+# Windows desktop still compile and do the unit tests still pass".
 # Trigger: Actions tab -> ci-check -> Run workflow.
 
 on:
@@ -15,6 +16,7 @@ on:
       - "aether/src/**"
       - "aether/Cargo.toml"
       - "aether/Cargo.lock"
+      - "aether-gui/**"
       - "quiche/quiche/**"
       - "quiche/octets/**"
       - ".github/workflows/ci-check.yml"
@@ -23,6 +25,7 @@ on:
       - "aether/src/**"
       - "aether/Cargo.toml"
       - "aether/Cargo.lock"
+      - "aether-gui/**"
       - "quiche/quiche/**"
       - "quiche/octets/**"
       - ".github/workflows/ci-check.yml"
@@ -41,23 +44,13 @@ env:
 
 jobs:
   check:
-    name: cargo check + lib tests
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: aether
+    name: cargo check + lib tests (Windows x64)
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-
-      # BoringSSL (through `boring` and `quiche`) is built from source, so the
-      # C toolchain and CMake have to be present before cargo is invoked.
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build nasm perl
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -69,19 +62,41 @@ jobs:
         with:
           workspaces: |
             aether
+            aether-gui/src-tauri
           key: ci-check
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.10.2
+      # BoringSSL (through `boring` and `quiche`) is built from source, so CMake
+      # and NASM have to be on the runner before cargo is invoked.
+      - name: Install CMake and Ninja
+        uses: lukka/get-cmake@latest
 
-      - name: Type-check every target
-        run: cargo check --locked --all-targets
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      # `--all-targets` covers the tests and benches as well as the library, so
+      # a change that only breaks a test target still fails here. `--locked` is
+      # left off deliberately: the lock file in the tree is out of step with the
+      # manifest, so a pinned build would refuse to start before compiling
+      # anything. It gets refreshed here and used by the later steps.
+      - name: Type-check the engine
+        working-directory: aether
+        run: cargo check --all-targets
 
       - name: Run the library tests
-        run: cargo test --locked --lib
+        working-directory: aether
+        run: cargo test --lib
 
       - name: Check formatting
+        working-directory: aether
         run: cargo fmt --check
 
-      - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Lint the engine
+        working-directory: aether
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The GUI is what a Windows user actually runs, so it is built here too.
+      # It ships the engine as a child process, so a change to the crate that
+      # breaks the desktop app has to show up here rather than in a release.
+      - name: Build the Windows GUI
+        working-directory: aether-gui/src-tauri
+        run: cargo build
