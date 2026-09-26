@@ -2079,27 +2079,32 @@ mod tests {
     }
 
     /// A response carrying one answer of `qtype`, so the parser has something
-    /// realistic to walk over the question and the answer section.
-    fn answer(name: &str, qtype: u16, rdata: &[u8]) -> Vec<u8> {
+    /// realistic to walk over the question and the answer section. The second
+    /// element is the offset of the answer's TYPE field, which a test needs in
+    /// order to rewrite the record type without hand-counting bytes.
+    fn answer(name: &str, qtype: u16, rdata: &[u8]) -> (Vec<u8>, usize) {
         let mut msg = reply(0x4242, name, qtype, true);
         // The `reply` helper leaves the question section ending after the qtype
-        // and class; the answer needs a name, type, class, ttl and length.
+        // and class; the answer needs a name, type, class, ttl and length. The
+        // name is written a second time here, so the answer's TYPE sits one
+        // full name plus four bytes further on than the question's did.
         for label in name.split('.') {
             msg.push(label.len() as u8);
             msg.extend_from_slice(label.as_bytes());
         }
         msg.push(0);
+        let type_at = msg.len();
         msg.extend_from_slice(&qtype.to_be_bytes());
         msg.extend_from_slice(&1u16.to_be_bytes());
         msg.extend_from_slice(&300u32.to_be_bytes());
         msg.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
         msg.extend_from_slice(rdata);
-        msg
+        (msg, type_at)
     }
 
     #[test]
     fn an_a_record_is_read_out_of_the_answer() {
-        let msg = answer("example.com", QTYPE_A, &[93, 184, 216, 34]);
+        let (msg, _) = answer("example.com", QTYPE_A, &[93, 184, 216, 34]);
         assert_eq!(
             parse_dns_address(&msg, QTYPE_A),
             Some(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)))
@@ -2109,7 +2114,7 @@ mod tests {
     #[test]
     fn an_aaaa_record_is_read_out_of_the_answer() {
         let v6: Ipv6Addr = "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap();
-        let msg = answer("example.com", QTYPE_AAAA, &v6.octets());
+        let (msg, _) = answer("example.com", QTYPE_AAAA, &v6.octets());
         assert_eq!(
             parse_dns_address(&msg, QTYPE_AAAA),
             Some(IpAddr::V6(v6)),
@@ -2120,11 +2125,9 @@ mod tests {
     #[test]
     fn an_a_query_ignores_an_aaaa_record_in_the_answer() {
         let v6: Ipv6Addr = "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap();
-        let mut msg = answer("example.com", QTYPE_AAAA, &v6.octets());
+        let (mut msg, at) = answer("example.com", QTYPE_AAAA, &v6.octets());
         // Overwrite the answer's type with A, leaving a 16-byte rdata length, so
         // the pair no longer matches and the record has to be stepped over.
-        let name_len = "example.com".len() + 2;
-        let at = 12 + name_len + 4;
         assert_eq!(&msg[at..at + 2], &QTYPE_AAAA.to_be_bytes());
         msg[at] = 0;
         msg[at + 1] = 1;
@@ -2133,10 +2136,9 @@ mod tests {
 
     #[test]
     fn a_cname_before_the_address_is_stepped_over() {
-        let mut msg = answer("example.com", QTYPE_A, &[93, 184, 216, 34]);
+        let (mut msg, at) = answer("example.com", QTYPE_A, &[93, 184, 216, 34]);
         // Replace the A answer with a CNAME so the parser has to keep reading
         // the section to find a record of the type it asked for.
-        let at = 12 + "example.com".len() + 2 + 4;
         assert_eq!(&msg[at..at + 2], &QTYPE_A.to_be_bytes());
         msg[at + 1] = 5;
         assert_eq!(parse_dns_address(&msg, QTYPE_A), None);
