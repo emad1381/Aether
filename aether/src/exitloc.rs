@@ -19,13 +19,7 @@ pub struct Policy {
 
 impl Policy {
     pub fn from_env() -> Option<Self> {
-        let raw = std::env::var("AETHER_EXIT_LOC").unwrap_or_default();
-        let spec = raw.trim();
-        if spec.is_empty() {
-            // Default policy for circumvention: never accept Iranian exit
-            return Self::parse("!IR");
-        }
-        Self::parse(spec)
+        Self::parse(&std::env::var("AETHER_EXIT_LOC").unwrap_or_default())
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
@@ -156,17 +150,22 @@ pub async fn trace_through(stack: &StackHandle) -> Result<(String, Duration)> {
 }
 
 pub async fn report(stack: &StackHandle, what: &str) -> Option<Exit> {
-    match trace_through(stack).await {
-        Ok((body, rtt)) => {
-            let exit = parse_exit(&body, rtt);
-            log::info!("[+] {what} exit: {}", exit.describe());
-            Some(exit)
-        }
-        Err(e) => {
-            log::debug!("could not read the exit of {what}: {e}");
-            None
+    for attempt in 0..2 {
+        match trace_through(stack).await {
+            Ok((body, rtt)) => {
+                let exit = parse_exit(&body, rtt);
+                log::info!("[+] {what} exit: {}", exit.describe());
+                return Some(exit);
+            }
+            Err(e) => {
+                log::debug!("could not read the exit of {what} (attempt {attempt}): {e}");
+                if attempt == 0 {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
         }
     }
+    None
 }
 
 pub async fn report_through_socks(proxy: SocketAddr, what: &str) -> Option<Exit> {

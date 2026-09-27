@@ -579,11 +579,6 @@ impl Supervisor {
             }
         }
 
-        // Ensure circumvention mode never accepts Iranian egress
-        if std::env::var("AETHER_EXIT_LOC").is_err() {
-            cmd.env("AETHER_EXIT_LOC", "!IR");
-        }
-
         if let Some(parent) = bin_path.parent() {
             cmd.current_dir(parent);
         }

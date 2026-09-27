@@ -505,6 +505,14 @@ pub async fn run_gool(
     secondary: account::Identity,
     listen: SocketAddr,
 ) -> Result<()> {
+    let sec_path = derive_sibling_path(
+        &warp_config_path(
+            &std::env::var("AETHER_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG.to_string()),
+        ),
+        "secondary",
+    );
+    let mut current_sec = secondary;
+
     // Scanning is what happens unless somebody named an endpoint themselves.
     let pinned = wiw_endpoints_with_fallback(&env_value)?;
 
@@ -617,9 +625,13 @@ pub async fn run_gool(
         outer_peer = Some(peer);
         inner_peer = Some(inner_peer_now);
 
+        if let Ok(fresh) = config::load_identity(&sec_path) {
+            current_sec = fresh;
+        }
+
         match run_warp_in_warp(
             primary.clone(),
-            secondary.clone(),
+            current_sec.clone(),
             peer,
             inner_peer_now,
             listen,
@@ -2674,7 +2686,17 @@ pub(crate) async fn spawn_udp_forwarder(
     let up_peer = inner_peer.clone();
     let up_task = tokio::spawn(async move {
         let mut buf = vec![0u8; 65536];
-        while let Ok((n, from)) = up_sock.recv_from(&mut buf).await {
+        loop {
+            let (n, from) = match up_sock.recv_from(&mut buf).await {
+                Ok(res) => res,
+                Err(e) => {
+                    #[cfg(windows)]
+                    if e.raw_os_error() == Some(10054) {
+                        continue;
+                    }
+                    break;
+                }
+            };
             {
                 let mut known = up_peer.lock().await;
                 if *known != Some(from) {
@@ -2763,21 +2785,22 @@ pub async fn run_warp_in_warp(
         establish_wg(&primary, peer, TUNNEL_MTU, true, 5, "outer").await?;
     tasks.push(outer_exit.abort_handle());
 
-    let (forwarder, _forwarder_guard) = spawn_udp_forwarder(&outer_stack, inner_peer).await?;
-    log::info!("[+] inner endpoint {inner_peer} tunneled through outer warp via {forwarder}");
-
     let mut current_sec = secondary;
     let mut inner_stack_final = None;
     let mut inner_exit_final = None;
 
     for attempt in 0..2 {
+        let (forwarder, forwarder_guard) = spawn_udp_forwarder(&outer_stack, inner_peer).await?;
+        log::info!("[+] inner endpoint {inner_peer} tunneled through outer warp via {forwarder}");
+
         log::info!("[*] establishing inner WARP tunnel (warp-in-warp)...");
         let (inner_stack, inner_exit) =
             establish_wg(&current_sec, forwarder, INNER_MTU, false, 20, "inner").await?;
 
-        let policy = exitloc::Policy::from_env();
+        let policy = exitloc::Policy::from_env().or_else(|| exitloc::Policy::parse("!IR"));
         match exitloc::settle(&inner_stack, &policy, "warp-in-warp").await {
             Ok(()) => {
+                tasks.push(forwarder_guard);
                 inner_stack_final = Some(inner_stack);
                 inner_exit_final = Some(inner_exit);
                 break;
@@ -2788,6 +2811,7 @@ pub async fn run_warp_in_warp(
                 );
                 drop(inner_exit);
                 drop(inner_stack);
+                drop(forwarder_guard);
                 match provision_wg_through_stack(&outer_stack).await {
                     Ok(new_sec) => {
                         let sec_path = derive_sibling_path(
