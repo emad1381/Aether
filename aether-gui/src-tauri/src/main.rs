@@ -6,6 +6,7 @@ mod matrix;
 mod ping;
 mod proxy;
 mod supervisor;
+mod tun;
 mod types;
 
 use std::sync::Arc;
@@ -380,6 +381,7 @@ fn set_launch_at_startup(enable: bool, mut cfg: TunnelConfig) -> Result<(), Stri
 }
 
 fn main() {
+    tun::cleanup_leftovers();
     let supervisor = Arc::new(Supervisor::new());
 
     tauri::Builder::default()

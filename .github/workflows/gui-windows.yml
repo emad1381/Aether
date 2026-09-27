@@ -147,9 +147,46 @@ jobs:
           }
           Pop-Location
 
+          # Download tun2socks and wintun for the Wintun TUN adapter
+          Write-Host "Downloading tun2socks and wintun..."
+          try {
+              $t2sZip = Join-Path $env:TEMP "tun2socks.zip"
+              Invoke-WebRequest -Uri "https://github.com/xjasonlyu/tun2socks/releases/download/v2.7.0/tun2socks-windows-amd64.zip" -OutFile $t2sZip -UseBasicParsing -TimeoutSec 60
+              Expand-Archive -Path $t2sZip -DestinationPath (Join-Path $env:TEMP "tun2socks_extracted") -Force
+              $foundT2s = Get-ChildItem -Path (Join-Path $env:TEMP "tun2socks_extracted") -Recurse -Filter "tun2socks*.exe" | Select-Object -First 1
+              if ($foundT2s) {
+                  Copy-Item -Force $foundT2s.FullName "$relDir/tun2socks.exe"
+                  Write-Host "Placed tun2socks.exe in $relDir"
+              }
+          } catch {
+              Write-Warning "Could not download tun2socks: $_"
+          }
+
+          try {
+              $wintunZip = Join-Path $env:TEMP "wintun.zip"
+              Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile $wintunZip -UseBasicParsing -TimeoutSec 60
+              Expand-Archive -Path $wintunZip -DestinationPath (Join-Path $env:TEMP "wintun_extracted") -Force
+              $foundWintun = Get-ChildItem -Path (Join-Path $env:TEMP "wintun_extracted") -Recurse -Filter "wintun.dll" | Where-Object { $_.FullName -like "*amd64*" } | Select-Object -First 1
+              if ($foundWintun) {
+                  Copy-Item -Force $foundWintun.FullName "$relDir/wintun.dll"
+                  Write-Host "Placed wintun.dll in $relDir"
+              }
+          } catch {
+              Write-Warning "Could not download wintun: $_"
+          }
+
+          if (!(Test-Path "$relDir/tun2socks.exe")) {
+              throw "tun2socks.exe was not downloaded or placed in $relDir"
+          }
+          if (!(Test-Path "$relDir/wintun.dll")) {
+              throw "wintun.dll was not downloaded or placed in $relDir"
+          }
+
           $filesToZip = @(
               "$relDir/aether-gui.exe",
               "$relDir/aether.exe",
+              "$relDir/tun2socks.exe",
+              "$relDir/wintun.dll",
               "$relDir/pt",
               "run-aether.bat"
           )
@@ -179,6 +216,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: "v2.1.7"
+          tag_name: "v2.1.8"
           files: aether/aether-windows-x86_64-gui.zip
           fail_on_unmatched_files: false

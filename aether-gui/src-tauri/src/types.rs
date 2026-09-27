@@ -260,6 +260,8 @@ pub struct TunnelStatus {
     pub uptime_secs: u64,
     pub socks_endpoint: String,
     pub system_proxy_active: bool,
+    #[serde(default)]
+    pub tun_active: bool,
     pub protocol: Option<String>,
     pub exit_ip: Option<String>,
     pub colo: Option<String>,

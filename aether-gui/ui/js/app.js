@@ -793,19 +793,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     config.tunnel_mode = mode;
     tunnelModeGroup.forEach((b) => {
       if (b.getAttribute('data-mode') === mode) {
-        b.className = 'px-3.5 py-1.5 rounded-md text-xs font-medium bg-[#222228] text-on-surface border border-[#393944]/50 transition-colors';
+        b.className = 'px-3 py-1.5 rounded-md text-xs font-medium bg-[#222228] text-on-surface border border-[#393944]/50 transition-colors';
       } else {
-        b.className = 'px-3.5 py-1.5 rounded-md text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors';
+        b.className = 'px-3 py-1.5 rounded-md text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors';
       }
     });
 
     if (tunnelModeHint) {
-      if (mode === 'system-wide') {
-        tunnelModeHint.textContent = 'System-wide Proxy Active (Routes all Windows apps & browsers)';
+      if (mode === 'tun') {
+        tunnelModeHint.textContent = 'TUN Virtual Adapter Active (Full system network tunneling via Wintun)';
+        tunnelModeHint.className = 'text-[10px] text-[#2dd4bf] font-mono';
+      } else if (mode === 'system-wide') {
+        tunnelModeHint.textContent = 'System Proxy Active (Routes Windows browsers & HTTP apps)';
         tunnelModeHint.className = 'text-[10px] text-[#f2711c] font-mono';
       } else {
         tunnelModeHint.textContent = 'Loopback proxy active on 127.0.0.1:1819';
-        tunnelModeHint.className = 'text-[10px] text-[#2dd4bf] font-mono';
+        tunnelModeHint.className = 'text-[10px] text-[#8e8e98] font-mono';
       }
     }
     api.saveGuiConfig(config);

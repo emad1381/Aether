@@ -19,7 +19,13 @@ pub struct Policy {
 
 impl Policy {
     pub fn from_env() -> Option<Self> {
-        Self::parse(&std::env::var("AETHER_EXIT_LOC").unwrap_or_default())
+        let raw = std::env::var("AETHER_EXIT_LOC").unwrap_or_default();
+        let spec = raw.trim();
+        if spec.is_empty() {
+            // Default policy for circumvention: never accept Iranian exit
+            return Self::parse("!IR");
+        }
+        Self::parse(spec)
     }
 
     pub fn parse(raw: &str) -> Option<Self> {

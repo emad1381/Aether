@@ -59,7 +59,7 @@
         <img src="./assets/logo.png" alt="Aether Logo" class="w-4 h-4 object-contain">
       </div>
       <span class="text-[13px] font-semibold tracking-tight text-on-surface">Aether</span>
-      <span class="text-[10px] font-mono text-[#8e8e98] px-1.5 py-0.5 rounded bg-[#18181c] border border-white/[0.06]">v2.1.7</span>
+      <span class="text-[10px] font-mono text-[#8e8e98] px-1.5 py-0.5 rounded bg-[#18181c] border border-white/[0.06]">v2.1.8</span>
     </div>
     <!-- Window Control Buttons (Crisp inline vector SVGs, never broken text ligatures) -->
     <div class="flex items-center h-full -mr-3">
@@ -255,7 +255,7 @@
             <div class="flex items-start gap-2 leading-relaxed px-1 py-0.5 rounded">
               <span class="text-outline shrink-0 font-mono">00:00:00.000</span>
               <span class="font-semibold text-outline shrink-0 font-mono">[SYS]</span>
-              <span class="text-on-surface font-mono">Aether Desktop Daemon initialized (v2.1.7-win64)</span>
+              <span class="text-on-surface font-mono">Aether Desktop Daemon initialized (v2.1.8-win64)</span>
             </div>
           </div>
           <!-- Quiet Footer Strip -->
@@ -507,7 +507,7 @@
                 <div class="flex flex-col pr-4 max-w-md">
                   <span class="text-[13px] font-medium text-on-surface">Client release</span>
                   <div class="flex items-center gap-2 mt-0.5">
-                    <span class="text-[11px] font-mono text-on-surface">v2.1.7</span>
+                    <span class="text-[11px] font-mono text-on-surface">v2.1.8</span>
                     <span class="text-[10px] font-mono text-[#2dd4bf] bg-[#2dd4bf]/15 border border-[#2dd4bf]/30 px-1.5 py-0.2 rounded font-medium inline-flex items-center gap-1">
                       <svg class="w-3 h-3 text-[#2dd4bf]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Up to date
                     </span>
@@ -540,14 +540,15 @@
               <div class="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-[#222227] gap-3">
                 <div class="flex flex-col pr-4 max-w-md">
                   <span class="text-[13px] font-medium text-on-surface">Tunnel routing mode</span>
-                  <span class="text-[12px] text-on-surface-variant">Proxy mode serves apps that point at the SOCKS address. System proxy sets the Windows proxy so browsers and most apps follow it automatically (no TUN driver is installed).</span>
+                  <span class="text-[12px] text-on-surface-variant">TUN Adapter creates a virtual network interface (Wintun) routing 100% of PC traffic at layer 3. System proxy sets Windows WinINET proxy. Proxy mode serves apps pointed at SOCKS5.</span>
                 </div>
                 <div class="flex flex-col items-end gap-1">
                   <div class="inline-flex bg-[#141417] p-0.5 rounded-lg border border-[#222227]" id="tunnel-mode-group">
-                    <button data-mode="proxy" class="px-3.5 py-1.5 rounded-md text-xs font-medium bg-[#222228] text-on-surface border border-[#393944]/50 transition-colors focus:outline-none" type="button">Proxy (SOCKS5)</button>
-                    <button data-mode="system-wide" class="px-3.5 py-1.5 rounded-md text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors focus:outline-none" type="button">System proxy (all apps)</button>
+                    <button data-mode="proxy" class="px-3 py-1.5 rounded-md text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors focus:outline-none" type="button">Proxy (SOCKS5)</button>
+                    <button data-mode="system-wide" class="px-3 py-1.5 rounded-md text-xs font-medium text-on-surface-variant hover:text-on-surface transition-colors focus:outline-none" type="button">System proxy</button>
+                    <button data-mode="tun" class="px-3 py-1.5 rounded-md text-xs font-medium bg-[#222228] text-on-surface border border-[#393944]/50 transition-colors focus:outline-none" type="button">TUN Adapter (Wintun)</button>
                   </div>
-                  <span id="tunnel-mode-hint" class="text-[10px] text-[#2dd4bf] font-mono">Loopback proxy active on 127.0.0.1:1819</span>
+                  <span id="tunnel-mode-hint" class="text-[10px] text-[#2dd4bf] font-mono">TUN Virtual Adapter (Wintun layer-3 system routing)</span>
                 </div>
               </div>
             </div>
@@ -951,7 +952,7 @@
         </div>
         <div>
           <h3 id="update-modal-title" class="text-[16px] font-semibold text-on-surface">Aether is Up to Date</h3>
-          <p id="update-modal-body" class="text-[12px] font-mono text-[#2dd4bf]">v2.1.7 (Latest version installed)</p>
+          <p id="update-modal-body" class="text-[12px] font-mono text-[#2dd4bf]">v2.1.8 (Latest version installed)</p>
           <p id="update-modal-link" class="text-[11px] font-mono text-[#ffb691] mt-1 hidden break-all select-text"></p>
         </div>
       </div>

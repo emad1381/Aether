@@ -528,6 +528,16 @@ pub async fn register(
     locale: &str,
     jwt: Option<&str>,
 ) -> Result<(AccountData, [u8; 32])> {
+    let client = http_client()?;
+    register_with_client(&client, model, locale, jwt).await
+}
+
+pub async fn register_with_client(
+    client: &reqwest::Client,
+    model: &str,
+    locale: &str,
+    jwt: Option<&str>,
+) -> Result<(AccountData, [u8; 32])> {
     let (wg_private, wg_public) = generate_x25519_keypair();
 
     let body = Registration {
@@ -549,7 +559,7 @@ pub async fn register(
         serde_json::to_vec(&body).map_err(|e| AetherError::Api(format!("encode: {e}")))?;
 
     let direct = send_with_retry("registration", || {
-        let mut req = http_client()?
+        let mut req = client
             .post(&url)
             .headers(base_headers())
             .json(&body);
@@ -705,6 +715,16 @@ pub async fn provision_team(
 
 pub async fn provision_wg(model: &str, locale: &str, jwt: Option<&str>) -> Result<Identity> {
     let (reg, wg_private) = register(model, locale, jwt).await?;
+    finish_provision(reg, wg_private)
+}
+
+pub async fn provision_wg_with_client(
+    client: &reqwest::Client,
+    model: &str,
+    locale: &str,
+    jwt: Option<&str>,
+) -> Result<Identity> {
+    let (reg, wg_private) = register_with_client(client, model, locale, jwt).await?;
     finish_provision(reg, wg_private)
 }
 

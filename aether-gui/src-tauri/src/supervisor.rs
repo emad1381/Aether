@@ -124,10 +124,10 @@ fn sync_appdata_identities() {
     for name in &toml_names {
         let appdata_file = appdata_dir.join(name);
         let current_file = current_dir.join(name);
-        if !current_file.exists() && appdata_file.exists() {
-            let _ = std::fs::copy(&appdata_file, &current_file);
-        } else if current_file.exists() && !appdata_file.exists() {
+        if current_file.exists() {
             let _ = std::fs::copy(&current_file, &appdata_file);
+        } else if appdata_file.exists() {
+            let _ = std::fs::copy(&appdata_file, &current_file);
         }
     }
 
@@ -229,6 +229,7 @@ impl Supervisor {
                 uptime_secs: 0,
                 socks_endpoint: "127.0.0.1:1819".to_string(),
                 system_proxy_active: false,
+                tun_active: false,
                 protocol: None,
                 exit_ip: None,
                 colo: None,
@@ -578,6 +579,15 @@ impl Supervisor {
             }
         }
 
+        // Ensure circumvention mode never accepts Iranian egress
+        if std::env::var("AETHER_EXIT_LOC").is_err() {
+            cmd.env("AETHER_EXIT_LOC", "!IR");
+        }
+
+        if let Some(parent) = bin_path.parent() {
+            cmd.current_dir(parent);
+        }
+
         #[cfg(windows)]
         {
             const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -689,6 +699,8 @@ impl Supervisor {
                 .creation_flags(CREATE_NO_WINDOW)
                 .output();
         }
+
+        crate::tun::cleanup_leftovers();
     }
 
     /// Answer the engine's Zero Trust email-code prompt. The child announces
@@ -721,10 +733,13 @@ impl Supervisor {
 
         self.kill_current_child().await;
 
-        // Deactivate system proxy if enabled, pointing at the port that was
+        // Deactivate TUN adapter or system proxy if enabled, pointing at the port that was
         // actually set, not a hardcoded default.
         {
             let saved = self.current_config.lock().clone().unwrap_or_default();
+            let bypass_ips = self.collect_bypass_ips(&saved);
+            crate::tun::stop_tun(&bypass_ips);
+
             let socks_addr = format!("127.0.0.1:{}", saved.socks_port);
             let tor_only = saved.tor_enabled && saved.tor_mode == "tor-only";
             let psiphon_only = saved.psiphon_enabled && saved.psiphon_mode == "psiphon-only";
@@ -750,6 +765,7 @@ impl Supervisor {
             let mut st = self.status.lock();
             st.state = State::Disconnected;
             st.system_proxy_active = false;
+            st.tun_active = false;
             st.latency_ms = None;
             st.uptime_secs = 0;
             let _ = app.emit("aether-status", st.clone());
@@ -772,6 +788,28 @@ impl Supervisor {
         Ok(())
     }
 
+    pub fn collect_bypass_ips(&self, cfg: &TunnelConfig) -> Vec<std::net::IpAddr> {
+        let mut ips = Vec::new();
+        if let Some(peer) = &cfg.peer {
+            if let Ok(addr) = peer.parse::<std::net::SocketAddr>() {
+                ips.push(addr.ip());
+            } else if let Ok(ip) = peer.parse::<std::net::IpAddr>() {
+                ips.push(ip);
+            }
+        }
+        if let Some(last_ip) = &cfg.last_success_ip {
+            if let Ok(ip) = last_ip.parse::<std::net::IpAddr>() {
+                ips.push(ip);
+            }
+        }
+        if let Some(exit_ip) = &self.status.lock().exit_ip {
+            if let Ok(ip) = exit_ip.parse::<std::net::IpAddr>() {
+                ips.push(ip);
+            }
+        }
+        ips
+    }
+
     pub fn set_connected(&self, app: &AppHandle, cfg: &TunnelConfig, custom_proto: Option<&str>) {
         let mut st = self.status.lock();
         st.state = State::Connected;
@@ -780,7 +818,14 @@ impl Supervisor {
         }
         *self.start_time.lock() = Some(Instant::now());
 
-        if cfg.auto_system_proxy || cfg.tunnel_mode == "system-wide" {
+        if cfg.tunnel_mode == "tun" {
+            let bypass_ips = self.collect_bypass_ips(cfg);
+            if let Err(e) = crate::tun::start_tun(cfg.socks_port, &bypass_ips) {
+                log::error!("[tun] failed to start TUN adapter: {e}");
+            } else {
+                st.tun_active = true;
+            }
+        } else if cfg.auto_system_proxy || cfg.tunnel_mode == "system-wide" {
             let socks_addr = format!("127.0.0.1:{}", cfg.socks_port);
             let tor_only = cfg.tor_enabled && cfg.tor_mode == "tor-only";
             let psiphon_only = cfg.psiphon_enabled && cfg.psiphon_mode == "psiphon-only";

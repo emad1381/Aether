@@ -2706,6 +2706,38 @@ pub(crate) async fn spawn_udp_forwarder(
     Ok((local, guard))
 }
 
+pub async fn provision_wg_through_stack(stack: &netstack::StackHandle) -> Result<account::Identity> {
+    log::info!("[*] provisioning foreign WARP identity through the established outer tunnel...");
+    let listener = socks::bind_listener("socks5", "127.0.0.1:0".parse().unwrap()).await?;
+    let local_addr = listener.local_addr().map_err(|e| AetherError::Other(e.to_string()))?;
+    let stack_clone = stack.clone();
+    let proxy_task = tokio::spawn(async move {
+        let _ = socks::serve(listener, stack_clone).await;
+    });
+
+    let res = async {
+        let proxy = reqwest::Proxy::all(format!("socks5h://{local_addr}"))
+            .map_err(|e| AetherError::Other(e.to_string()))?;
+        let client = reqwest::Client::builder()
+            .proxy(proxy)
+            .user_agent(consts::UA_REGISTER)
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| AetherError::Other(e.to_string()))?;
+
+        account::provision_wg_with_client(&client, consts::DEFAULT_MODEL, consts::DEFAULT_LOCALE, None).await
+    }
+    .await;
+
+    proxy_task.abort();
+    let identity = res?;
+    log::info!(
+        "[+] successfully provisioned clean foreign WARP identity (device={})",
+        identity.device_id
+    );
+    Ok(identity)
+}
+
 /// One round of the warp-in-warp tunnel: an outer WireGuard tunnel carrying
 /// an inner one to a different exit edge, with the SOCKS5 server on top. This
 /// is the single-connection part; the reconnect loop that calls it is
@@ -2734,13 +2766,58 @@ pub async fn run_warp_in_warp(
     let (forwarder, _forwarder_guard) = spawn_udp_forwarder(&outer_stack, inner_peer).await?;
     log::info!("[+] inner endpoint {inner_peer} tunneled through outer warp via {forwarder}");
 
-    log::info!("[*] establishing inner WARP tunnel (warp-in-warp)...");
-    let (inner_stack, mut inner_exit) =
-        establish_wg(&secondary, forwarder, INNER_MTU, false, 20, "inner").await?;
+    let mut current_sec = secondary;
+    let mut inner_stack_final = None;
+    let mut inner_exit_final = None;
+
+    for attempt in 0..2 {
+        log::info!("[*] establishing inner WARP tunnel (warp-in-warp)...");
+        let (inner_stack, inner_exit) =
+            establish_wg(&current_sec, forwarder, INNER_MTU, false, 20, "inner").await?;
+
+        let policy = exitloc::Policy::from_env();
+        match exitloc::settle(&inner_stack, &policy, "warp-in-warp").await {
+            Ok(()) => {
+                inner_stack_final = Some(inner_stack);
+                inner_exit_final = Some(inner_exit);
+                break;
+            }
+            Err(e) if attempt == 0 => {
+                log::warn!(
+                    "[-] warp-in-warp exit location rejected: {e}; re-provisioning clean foreign identity through outer tunnel..."
+                );
+                drop(inner_exit);
+                drop(inner_stack);
+                match provision_wg_through_stack(&outer_stack).await {
+                    Ok(new_sec) => {
+                        let sec_path = derive_sibling_path(
+                            &warp_config_path(
+                                &std::env::var("AETHER_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG.to_string()),
+                            ),
+                            "secondary",
+                        );
+                        let _ = config::save(&sec_path, &new_sec);
+                        current_sec = new_sec;
+                    }
+                    Err(pe) => {
+                        log::warn!("[-] failed to provision via outer tunnel: {pe}");
+                        return Err(e);
+                    }
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    let (inner_stack, mut inner_exit) = match (inner_stack_final, inner_exit_final) {
+        (Some(s), Some(e)) => (s, e),
+        _ => return Err(AetherError::Other(
+            "could not establish verified foreign inner tunnel".into(),
+        )),
+    };
     tasks.push(inner_exit.abort_handle());
 
     let policy = exitloc::Policy::from_env();
-    exitloc::settle(&inner_stack, &policy, "warp-in-warp").await?;
     let policy_stack = inner_stack.clone();
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;
