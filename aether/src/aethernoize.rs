@@ -344,7 +344,7 @@ pub async fn apply_obfuscation(sock: &UdpSocket, _peer: SocketAddr, cfg: &Aether
         }
     }
 
-    for s in [&cfg.i2, &cfg.i3, &cfg.i4, &cfg.i5].iter().flatten() {
+    for s in [cfg.i2.as_deref(), cfg.i3.as_deref(), cfg.i4.as_deref(), cfg.i5.as_deref()].into_iter().flatten() {
         let pkt = parse_cps(s);
         if !pkt.is_empty() {
             send_connected(sock, &pkt).await;
