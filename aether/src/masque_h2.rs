@@ -186,7 +186,7 @@ fn build_tls(cfg: &H2TunnelConfig) -> Result<boring::ssl::ConnectConfiguration> 
     // pin_endpoint=true with pins: pin-based verification (SNI can be spoofed)
     // pin_endpoint=false: SslVerifyMode::NONE (default, required for Cloudflare MASQUE edges)
     let pin_refs: Vec<&[u8]> = cfg.expected_pins.iter().map(|p| p.as_slice()).collect();
-    tls::install_verification(&mut *builder, cfg.pin_endpoint, &pin_refs)?;
+    tls::install_verification(&mut builder, cfg.pin_endpoint, &pin_refs)?;
 
     let connector = builder.build();
     let mut config = connector

@@ -181,6 +181,7 @@ impl CapsuleParser {
         self.buf.extend_from_slice(data);
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<Option<Capsule>> {
         let mut b = Octets::with_slice(&self.buf);
 

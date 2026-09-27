@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -1835,6 +1835,7 @@ mod accept_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv6Addr;
 
     fn parse_resolvers(raw: &str) -> Vec<SocketAddr> {
         let mut servers: Vec<SocketAddr> = Vec::new();
