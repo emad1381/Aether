@@ -293,6 +293,23 @@ impl Supervisor {
         // ===================================================================
         // MANUAL MODE (Uses the exact protocol chosen in Settings)
         // ===================================================================
+        let mut cfg = cfg;
+        if std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, cfg.socks_port)).is_err() {
+            if let Ok(l) = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)) {
+                if let Ok(addr) = l.local_addr() {
+                    cfg.socks_port = addr.port();
+                }
+            }
+        }
+        if let Some(http) = cfg.http_port {
+            if std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, http)).is_err() {
+                if let Ok(l) = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)) {
+                    if let Ok(addr) = l.local_addr() {
+                        cfg.http_port = Some(addr.port());
+                    }
+                }
+            }
+        }
         let args = build_cli_args(&cfg);
         self.spawn_process(&bin_path, &args, &app, &cfg, None).await
     }

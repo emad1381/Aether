@@ -130,12 +130,33 @@ pub(crate) fn warn_if_world_reachable(kind: &str, listen: SocketAddr) {
 }
 
 pub async fn bind_listener(kind: &str, listen: SocketAddr) -> Result<TcpListener> {
-    TcpListener::bind(listen).await.map_err(|error| {
-        AetherError::Other(format!(
+    match TcpListener::bind(listen).await {
+        Ok(listener) => Ok(listener),
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+            log::warn!(
+                "[-] {kind} port {} is already in use; dynamically allocating an available port",
+                listen.port()
+            );
+            let dynamic = SocketAddr::new(listen.ip(), 0);
+            match TcpListener::bind(dynamic).await {
+                Ok(listener) => {
+                    let actual = listener.local_addr().unwrap_or(dynamic);
+                    log::info!(
+                        "[+] {kind} successfully bound to dynamic port {actual}"
+                    );
+                    Ok(listener)
+                }
+                Err(e) => Err(AetherError::Other(format!(
+                    "the {kind} listener cannot use {listen} ({error}) and dynamic port binding failed ({e}){}",
+                    bind_hint(&error)
+                ))),
+            }
+        }
+        Err(error) => Err(AetherError::Other(format!(
             "the {kind} listener cannot use {listen}: {error}{}",
             bind_hint(&error)
-        ))
-    })
+        ))),
+    }
 }
 
 fn bind_hint(error: &std::io::Error) -> &'static str {
