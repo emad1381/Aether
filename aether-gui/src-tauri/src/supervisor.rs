@@ -1520,14 +1520,21 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
                 args.push(bin.to_string());
             }
         }
-        let psiphon_http = cfg
-            .psiphon_http
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .or_else(|| cfg.http_port.map(|p| format!("127.0.0.1:{p}")))
-            .or_else(|| Some("127.0.0.1:1820".to_string()));
+        let psiphon_http = if psiphon_only {
+            cfg.psiphon_http
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .or_else(|| cfg.http_port.map(|p| format!("127.0.0.1:{p}")))
+                .or_else(|| Some("127.0.0.1:1820".to_string()))
+        } else {
+            cfg.psiphon_http
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        };
 
         if let Some(ref http) = psiphon_http {
             args.push("--psiphon-http".to_string());

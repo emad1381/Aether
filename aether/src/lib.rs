@@ -121,7 +121,9 @@ pub async fn run_with(args: Vec<String>) -> Result<()> {
         .unwrap_or_else(|| "127.0.0.1:1819".parse().unwrap());
 
     drop(socks::bind_listener("socks5", listen).await?);
-    drop(bind_http_proxy().await?);
+    if let Err(e) = bind_http_proxy().await {
+        log::warn!("[-] {e}; HTTP proxy will not be available");
+    }
 
     let base_config = std::env::var("AETHER_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG.to_string());
 
@@ -1567,7 +1569,13 @@ async fn run_masque_tunnel(
     exitloc::settle(&hop.stack, &policy, "masque").await?;
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;
-    let http_listener = bind_http_proxy().await?;
+    let http_listener = match bind_http_proxy().await {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!("[-] {e}; continuing with SOCKS5 only");
+            None
+        }
+    };
 
     let mut tasks = TaskGuard::new();
 
@@ -1903,7 +1911,13 @@ pub async fn run_masque_in_masque(
     exitloc::settle(&inner.stack, &policy, "masque-in-masque").await?;
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;
-    let http_listener = bind_http_proxy().await?;
+    let http_listener = match bind_http_proxy().await {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!("[-] {e}; continuing with SOCKS5 only");
+            None
+        }
+    };
 
     let mut tasks = TaskGuard::new();
     let http_task = spawn_http_proxy(http_listener, &inner.stack);
@@ -2487,7 +2501,13 @@ async fn run_wireguard_tunnel(
     exitloc::settle(&stack, &policy, "wireguard").await?;
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;
-    let http_listener = bind_http_proxy().await?;
+    let http_listener = match bind_http_proxy().await {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!("[-] {e}; continuing with SOCKS5 only");
+            None
+        }
+    };
 
     let socks_stack = stack.clone();
     let socks_task = tokio::spawn(async move { socks::serve(socks_listener, socks_stack).await });
@@ -2724,7 +2744,13 @@ pub async fn run_warp_in_warp(
     let policy_stack = inner_stack.clone();
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;
-    let http_listener = bind_http_proxy().await?;
+    let http_listener = match bind_http_proxy().await {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!("[-] {e}; continuing with SOCKS5 only");
+            None
+        }
+    };
 
     let http_task = spawn_http_proxy(http_listener, &inner_stack);
     if let Some(task) = &http_task {
