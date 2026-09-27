@@ -1047,6 +1047,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::all)]
     fn checksum16(data: &[u8], initial: u32) -> u16 {
         let mut sum = initial;
         let mut chunks = data.chunks_exact(2);

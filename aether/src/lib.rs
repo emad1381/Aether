@@ -666,7 +666,7 @@ fn team_scope() -> Option<String> {
 
 fn enrolled_teams(base: &str) -> Vec<String> {
     let dir_end = base
-        .rfind(|c| matches!(c, '/' | '\\'))
+        .rfind(['/', '\\'])
         .map(|i| i + 1)
         .unwrap_or(0);
     let dir = if dir_end == 0 { "." } else { &base[..dir_end] };
@@ -864,7 +864,7 @@ fn masque_config_path(base: &str) -> String {
 
 fn derive_sibling_path(base: &str, suffix: &str) -> String {
     let dir_end = base
-        .rfind(|c| matches!(c, '/' | '\\'))
+        .rfind(['/', '\\'])
         .map(|i| i + 1)
         .unwrap_or(0);
     match base[dir_end..].rfind('.') {
