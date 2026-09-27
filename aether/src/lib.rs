@@ -224,12 +224,16 @@ pub async fn run_with(args: Vec<String>) -> Result<()> {
         }
         psiphon::Mode::Reverse => {
             if matches!(protocol, Protocol::WireGuard | Protocol::WarpInWarp) {
-                return Err(AetherError::Other(format!(
-                    "psiphon carries tcp only and warp's wireguard endpoints answer on udp alone, \
-                     so {} can never be reached through psiphon; use --masque, which this mode \
-                     runs over http/2, or put psiphon inside the tunnel instead with --psiphon",
+                // Psiphon only carries TCP while WARP's WireGuard edges answer on UDP
+                // alone, so reverse mode can never dial this carrier. Fall back to
+                // MASQUE over HTTP/2 instead of dying: the Windows GUI offers
+                // reverse on every protocol, and a working tunnel beats an error.
+                log::warn!(
+                    "[-] {} cannot be reached through psiphon (psiphon carries tcp only); falling back to MASQUE over http/2",
                     protocol.label()
-                )));
+                );
+                protocol = Protocol::Masque;
+                std::env::set_var("AETHER_PROTOCOL", "masque");
             }
 
             let socks = psiphon::start_reverse(psiphon::state_dir(&base_config)).await?;
@@ -662,7 +666,7 @@ fn team_scope() -> Option<String> {
 
 fn enrolled_teams(base: &str) -> Vec<String> {
     let dir_end = base
-        .rfind(|c| c == '/' || c == '\\')
+        .rfind(|c| matches!(c, '/' | '\\'))
         .map(|i| i + 1)
         .unwrap_or(0);
     let dir = if dir_end == 0 { "." } else { &base[..dir_end] };
@@ -735,7 +739,7 @@ async fn enrol_zero_trust(base: &str) {
 
     std::env::set_var("AETHER_TEAM", &team);
 
-    if known.iter().any(|enrolled| *enrolled == team) {
+    if known.contains(&team) {
         log::info!("[+] reusing the saved enrolment for team {team}; no sign-in needed");
         return;
     }
@@ -860,7 +864,7 @@ fn masque_config_path(base: &str) -> String {
 
 fn derive_sibling_path(base: &str, suffix: &str) -> String {
     let dir_end = base
-        .rfind(|c| c == '/' || c == '\\')
+        .rfind(|c| matches!(c, '/' | '\\'))
         .map(|i| i + 1)
         .unwrap_or(0);
     match base[dir_end..].rfind('.') {
@@ -1048,7 +1052,7 @@ async fn select_wg_peers(
     let probe = wg_prober::WgProbe {
         private_key: std::sync::Arc::new(private_key),
         peer_public_key: std::sync::Arc::new(peer_public),
-        client_id: identity.client_id.clone(),
+        client_id: identity.client_id,
         local_ipv4: identity
             .ipv4
             .parse()
@@ -1211,7 +1215,12 @@ async fn quick_verify_masque_peer(identity: &account::Identity, peer: SocketAddr
             pin_endpoint: true,
             expected_pins: consts::MASQUE_PINS.iter().map(|p| p.to_vec()).collect(),
         };
-        return masque_h2::verify_h2(&cfg, std::time::Duration::from_secs(5))
+        let timeout = if crate::upstream::configured().is_some() {
+            std::time::Duration::from_secs(15)
+        } else {
+            std::time::Duration::from_secs(5)
+        };
+        return masque_h2::verify_h2(&cfg, timeout)
             .await
             .is_ok();
     }
@@ -1282,6 +1291,21 @@ async fn run_masque(
         }
     }
 
+    if forced.is_none() && quick_peer.is_none() && crate::upstream::configured().is_some() {
+        let well_known = [
+            "162.159.192.1:443".parse::<SocketAddr>().expect("valid address"),
+            "162.159.193.1:443".parse::<SocketAddr>().expect("valid address"),
+        ];
+        for peer in well_known {
+            log::info!("[*] testing well-known MASQUE gateway {peer} through upstream proxy");
+            if quick_verify_masque_peer(&identity, peer).await {
+                log::info!("[+] upstream proxy reached Cloudflare MASQUE gateway {peer}; skipping scan");
+                quick_peer = Some(peer);
+                break;
+            }
+        }
+    }
+
     let (mode_str, ip) = if forced.is_some() || quick_peer.is_some() {
         scan_settings_from_env()
     } else {
@@ -1321,16 +1345,46 @@ async fn run_masque(
                         }
                         Err(_) => return Err(AetherError::Other(format!("bad peer address {p}"))),
                     },
-                    None => match hunt_masque_peer(&identity, &mode_str, ip).await {
-                        Ok(peer) => peer,
-                        Err(e) => {
-                            log::warn!(
-                                "[-] no usable MASQUE gateway found: {e}; rescanning shortly"
-                            );
-                            tokio::time::sleep(masque_reconnect_delay()).await;
-                            continue;
+                    None => {
+                        if crate::upstream::configured().is_some() {
+                            let well_known = [
+                                "162.159.192.1:443".parse::<SocketAddr>().expect("valid address"),
+                                "162.159.193.1:443".parse::<SocketAddr>().expect("valid address"),
+                            ];
+                            let mut chosen = None;
+                            for peer in well_known {
+                                log::info!("[*] testing well-known MASQUE gateway {peer} through upstream proxy");
+                                if quick_verify_masque_peer(&identity, peer).await {
+                                    chosen = Some(peer);
+                                    break;
+                                }
+                            }
+                            match chosen {
+                                Some(peer) => peer,
+                                None => match hunt_masque_peer(&identity, &mode_str, ip).await {
+                                    Ok(peer) => peer,
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[-] no usable MASQUE gateway found: {e}; rescanning shortly"
+                                        );
+                                        tokio::time::sleep(masque_reconnect_delay()).await;
+                                        continue;
+                                    }
+                                },
+                            }
+                        } else {
+                            match hunt_masque_peer(&identity, &mode_str, ip).await {
+                                Ok(peer) => peer,
+                                Err(e) => {
+                                    log::warn!(
+                                        "[-] no usable MASQUE gateway found: {e}; rescanning shortly"
+                                    );
+                                    tokio::time::sleep(masque_reconnect_delay()).await;
+                                    continue;
+                                }
+                            }
                         }
-                    },
+                    }
                 },
             }
         };

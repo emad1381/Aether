@@ -99,7 +99,13 @@ fn validation_timeout() -> Duration {
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|&v| v > 0)
         .map(|v| v.min(86_400))
-        .unwrap_or(10);
+        .unwrap_or_else(|| {
+            if crate::upstream::configured().is_some() {
+                30
+            } else {
+                10
+            }
+        });
     Duration::from_secs(secs)
 }
 
@@ -142,7 +148,11 @@ pub fn h2_peer(quic_peer: SocketAddr) -> SocketAddr {
             return addr;
         }
     }
-    quic_peer
+    if quic_peer.port() == 443 || quic_peer.port() == 8443 {
+        quic_peer
+    } else {
+        SocketAddr::new(quic_peer.ip(), 443)
+    }
 }
 
 fn build_tls(cfg: &H2TunnelConfig) -> Result<boring::ssl::ConnectConfiguration> {

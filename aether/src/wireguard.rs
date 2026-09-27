@@ -523,6 +523,7 @@ async fn verify_dataplane(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn verify_endpoint(
     peer: SocketAddr,
     private_key: [u8; 32],
@@ -547,6 +548,7 @@ pub async fn verify_endpoint(
     Ok(elapsed)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn verify_endpoint_keep_session(
     peer: SocketAddr,
     private_key: [u8; 32],

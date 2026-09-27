@@ -57,9 +57,23 @@ impl std::fmt::Debug for Upstream {
     }
 }
 
-pub fn configured() -> Option<&'static Upstream> {
-    static UPSTREAM: std::sync::OnceLock<Option<Upstream>> = std::sync::OnceLock::new();
-    UPSTREAM.get_or_init(Upstream::from_env).as_ref()
+static CACHED_UPSTREAM: parking_lot::RwLock<Option<(String, Option<Upstream>)>> =
+    parking_lot::RwLock::new(None);
+
+pub fn configured() -> Option<Upstream> {
+    let current_env = std::env::var("AETHER_UPSTREAM").unwrap_or_default();
+    {
+        let read = CACHED_UPSTREAM.read();
+        if let Some((ref cached_str, ref cached_up)) = *read {
+            if cached_str == &current_env {
+                return cached_up.clone();
+            }
+        }
+    }
+    let parsed = Upstream::from_env();
+    let mut write = CACHED_UPSTREAM.write();
+    *write = Some((current_env, parsed.clone()));
+    parsed
 }
 
 impl Upstream {
@@ -454,7 +468,7 @@ pub fn real_source(local: SocketAddr, observed: SocketAddr) -> SocketAddr {
 
 pub async fn attach_detour(socket: &UdpSocket, peer: SocketAddr) -> Result<DetourGuard> {
     match configured() {
-        Some(proxy) => attach_detour_via(proxy, socket, peer).await,
+        Some(proxy) => attach_detour_via(&proxy, socket, peer).await,
         None => Ok(DetourGuard::default()),
     }
 }
