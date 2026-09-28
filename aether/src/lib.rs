@@ -2798,6 +2798,7 @@ pub async fn run_warp_in_warp(
         establish_wg(&primary, peer, TUNNEL_MTU, true, 5, "outer").await?;
     tasks.push(outer_exit.abort_handle());
 
+    let initial_sec_id = secondary.device_id.clone();
     let mut current_sec = secondary;
     let mut inner_stack_final = None;
     let mut inner_exit_final = None;
@@ -2816,7 +2817,7 @@ pub async fn run_warp_in_warp(
                 tasks.merge(forwarder_guard);
                 inner_stack_final = Some(inner_stack);
                 inner_exit_final = Some(inner_exit);
-                if current_sec.device_id != secondary.device_id {
+                if current_sec.device_id != initial_sec_id {
                     let sec_path = derive_sibling_path(
                         &warp_config_path(
                             &std::env::var("AETHER_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG.to_string()),
