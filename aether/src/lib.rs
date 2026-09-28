@@ -625,7 +625,7 @@ pub async fn run_gool(
         outer_peer = Some(peer);
         inner_peer = Some(inner_peer_now);
 
-        if let Ok(fresh) = config::load_identity(&sec_path) {
+        if let Ok(Some(fresh)) = config::load(&sec_path) {
             current_sec = fresh;
         }
 
@@ -2659,6 +2659,10 @@ impl TaskGuard {
     fn push(&mut self, handle: tokio::task::AbortHandle) {
         self.0.push(handle);
     }
+
+    fn merge(&mut self, mut other: TaskGuard) {
+        self.0.append(&mut other.0);
+    }
 }
 
 impl Drop for TaskGuard {
@@ -2800,7 +2804,7 @@ pub async fn run_warp_in_warp(
         let policy = exitloc::Policy::from_env().or_else(|| exitloc::Policy::parse("!IR"));
         match exitloc::settle(&inner_stack, &policy, "warp-in-warp").await {
             Ok(()) => {
-                tasks.push(forwarder_guard);
+                tasks.merge(forwarder_guard);
                 inner_stack_final = Some(inner_stack);
                 inner_exit_final = Some(inner_exit);
                 break;
@@ -2841,7 +2845,7 @@ pub async fn run_warp_in_warp(
     };
     tasks.push(inner_exit.abort_handle());
 
-    let policy = exitloc::Policy::from_env();
+    let policy = exitloc::Policy::from_env().or_else(|| exitloc::Policy::parse("!IR"));
     let policy_stack = inner_stack.clone();
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;
