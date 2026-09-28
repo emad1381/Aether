@@ -11,6 +11,39 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 static TUN_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static CONFIGURED_ROUTES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static WATCHDOG_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(windows)]
+pub fn is_elevated() -> bool {
+    unsafe {
+        let mut handle = std::ptr::null_mut();
+        if windows_sys::Win32::System::Threading::OpenProcessToken(
+            windows_sys::Win32::System::Threading::GetCurrentProcess(),
+            windows_sys::Win32::Security::TOKEN_QUERY,
+            &mut handle,
+        ) != 0 {
+            let mut elevation = windows_sys::Win32::Security::TOKEN_ELEVATION { TokenIsElevated: 0 };
+            let mut ret_len = 0;
+            let success = windows_sys::Win32::Security::GetTokenInformation(
+                handle,
+                windows_sys::Win32::Security::TokenElevation,
+                &mut elevation as *mut _ as *mut _,
+                std::mem::size_of::<windows_sys::Win32::Security::TOKEN_ELEVATION>() as u32,
+                &mut ret_len,
+            );
+            windows_sys::Win32::Foundation::CloseHandle(handle);
+            if success != 0 {
+                return elevation.TokenIsElevated != 0;
+            }
+        }
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_elevated() -> bool {
+    true
+}
 
 pub fn is_tun_active() -> bool {
     TUN_PROCESS.lock().unwrap().is_some()
@@ -83,7 +116,71 @@ fn run_cmd(cmd: &str, args: &[&str]) -> Result<(), String> {
     }
 }
 
+fn wait_for_adapter(max_wait: Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < max_wait {
+        let mut command = Command::new("netsh");
+        command.args(["interface", "show", "interface", "name=AetherTun"]);
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        if let Ok(out) = command.output() {
+            if out.status.success() {
+                return true;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
+fn spawn_tun_watchdog() {
+    if WATCHDOG_ACTIVE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let exited = {
+                let mut guard = TUN_PROCESS.lock().unwrap();
+                if let Some(child) = guard.as_mut() {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            log::warn!("[tun] watchdog: tun2socks exited ({status}) unexpectedly; restoring routing table");
+                            true
+                        }
+                        Err(e) => {
+                            log::warn!("[tun] watchdog error checking tun2socks: {e}");
+                            false
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            };
+            if exited {
+                cleanup_leftovers();
+                let mut guard = TUN_PROCESS.lock().unwrap();
+                *guard = None;
+                WATCHDOG_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+                break;
+            }
+            if !is_tun_active() {
+                WATCHDOG_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+                break;
+            }
+        }
+    });
+}
+
 pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
+    if !is_elevated() {
+        return Err(
+            "Administrator privileges are required for TUN mode. Please right-click Aether and select 'Run as administrator'."
+                .to_string(),
+        );
+    }
+
     stop_tun(bypass_ips);
 
     let tun2socks_bin = find_executable("tun2socks.exe")
@@ -119,14 +216,23 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn tun2socks: {e}"))?;
 
-    *TUN_PROCESS.lock().unwrap() = Some(child);
+    // Check if child exited immediately
+    if let Ok(Some(status)) = child.try_wait() {
+        return Err(format!("tun2socks exited immediately: {status}"));
+    }
 
-    // 2. Wait 600ms for Wintun virtual adapter to initialize in Windows
-    std::thread::sleep(Duration::from_millis(600));
+    // 2. Poll for Wintun virtual adapter
+    if !wait_for_adapter(Duration::from_secs(5)) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("AetherTun virtual adapter failed to appear in Windows network interfaces within 5s".to_string());
+    }
+
+    *TUN_PROCESS.lock().unwrap() = Some(child);
 
     // 3. Configure IP address on AetherTun adapter
     if let Err(e) = run_cmd(
@@ -142,10 +248,13 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
             "mask=255.255.0.0",
         ],
     ) {
-        log::warn!("[tun] netsh set address warning: {e}");
+        log::error!("[tun] failed to configure IP on AetherTun: {e}; rolling back");
+        stop_tun(bypass_ips);
+        return Err(format!("Failed to set AetherTun IP: {e}"));
     }
 
-    // 4. Set DNS on AetherTun adapter
+    // 4. Set interface metric to 1 (highest priority) and configure DNS
+    let _ = run_cmd("netsh", &["interface", "ipv4", "set", "interface", "AetherTun", "metric=1"]);
     let _ = run_cmd(
         "netsh",
         &[
@@ -188,16 +297,26 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
     }
 
     // 6. Add split default routes (0.0.0.0/1 and 128.0.0.0/1) directing all system traffic to AetherTun
-    let _ = run_cmd(
+    if let Err(e) = run_cmd(
         "route",
         &["add", "0.0.0.0", "mask", "128.0.0.0", "198.18.0.1", "metric", "1"],
-    );
-    let _ = run_cmd(
+    ) {
+        log::error!("[tun] failed to add split default route 0.0.0.0/1: {e}; rolling back");
+        stop_tun(bypass_ips);
+        return Err(format!("Failed to route 0.0.0.0/1: {e}"));
+    }
+
+    if let Err(e) = run_cmd(
         "route",
         &["add", "128.0.0.0", "mask", "128.0.0.0", "198.18.0.1", "metric", "1"],
-    );
+    ) {
+        log::error!("[tun] failed to add split default route 128.0.0.0/1: {e}; rolling back");
+        stop_tun(bypass_ips);
+        return Err(format!("Failed to route 128.0.0.0/1: {e}"));
+    }
 
     *CONFIGURED_ROUTES.lock().unwrap() = configured;
+    spawn_tun_watchdog();
     log::info!("[tun] AetherTun virtual adapter active; full system routed via 198.18.0.1");
 
     Ok(())
@@ -248,6 +367,19 @@ pub fn stop_tun(bypass_ips: &[IpAddr]) {
 pub fn cleanup_leftovers() {
     let _ = run_cmd("route", &["delete", "0.0.0.0", "mask", "128.0.0.0"]);
     let _ = run_cmd("route", &["delete", "128.0.0.0", "mask", "128.0.0.0"]);
+    let mut configured = CONFIGURED_ROUTES.lock().unwrap();
+    for ip_str in configured.drain(..) {
+        let _ = run_cmd("route", &["delete", &ip_str]);
+    }
+    let cf_subnets = [
+        "162.159.192.0",
+        "162.159.193.0",
+        "162.159.195.0",
+        "188.114.96.0",
+    ];
+    for subnet in &cf_subnets {
+        let _ = run_cmd("route", &["delete", subnet]);
+    }
     #[cfg(windows)]
     {
         let mut kill_cmd = Command::new("taskkill");

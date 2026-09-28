@@ -213,6 +213,7 @@ pub struct Supervisor {
     kill_tx: broadcast::Sender<()>,
     connected_notify: Arc<Notify>,
     is_stopping: AtomicBool,
+    detected_peers: Mutex<std::collections::HashSet<std::net::IpAddr>>,
 }
 
 impl Supervisor {
@@ -239,6 +240,7 @@ impl Supervisor {
             kill_tx,
             connected_notify: Arc::new(Notify::new()),
             is_stopping: AtomicBool::new(false),
+            detected_peers: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -783,26 +785,40 @@ impl Supervisor {
         Ok(())
     }
 
+    pub fn extract_and_add_peers(&self, line: &str) {
+        let mut peers = self.detected_peers.lock();
+        for word in line.split([' ', '(', ')', '[', ']', ',', ';']) {
+            let trimmed = word.trim();
+            if let Ok(addr) = trimmed.parse::<std::net::SocketAddr>() {
+                if !addr.ip().is_loopback() && !addr.ip().is_unspecified() {
+                    peers.insert(addr.ip());
+                }
+            } else if let Ok(ip) = trimmed.parse::<std::net::IpAddr>() {
+                if !ip.is_loopback() && !ip.is_unspecified() {
+                    peers.insert(ip);
+                }
+            }
+        }
+    }
+
     pub fn collect_bypass_ips(&self, cfg: &TunnelConfig) -> Vec<std::net::IpAddr> {
-        let mut ips = Vec::new();
+        let mut ips = std::collections::HashSet::new();
         if let Some(peer) = &cfg.peer {
             if let Ok(addr) = peer.parse::<std::net::SocketAddr>() {
-                ips.push(addr.ip());
+                ips.insert(addr.ip());
             } else if let Ok(ip) = peer.parse::<std::net::IpAddr>() {
-                ips.push(ip);
+                ips.insert(ip);
             }
         }
         if let Some(last_ip) = &cfg.last_success_ip {
             if let Ok(ip) = last_ip.parse::<std::net::IpAddr>() {
-                ips.push(ip);
+                ips.insert(ip);
             }
         }
-        if let Some(exit_ip) = &self.status.lock().exit_ip {
-            if let Ok(ip) = exit_ip.parse::<std::net::IpAddr>() {
-                ips.push(ip);
-            }
+        for ip in self.detected_peers.lock().iter() {
+            ips.insert(*ip);
         }
-        ips
+        ips.into_iter().collect()
     }
 
     pub fn set_connected(&self, app: &AppHandle, cfg: &TunnelConfig, custom_proto: Option<&str>) {
@@ -1032,9 +1048,9 @@ fn extract_progress(line: &str) -> Option<(u8, String)> {
         Some((50, "Tor bootstrapping...".to_string()))
     } else if line.contains("psiphon is ready;") || line.contains("tor is ready;") {
         Some((95, "Tunnel established, finalizing proxy...".to_string()))
-    } else if line.contains("tunnel validated") || line.contains("socks5 server listening") || line.contains("socks5 listening on") {
+    } else if line.contains("tunnel validated") {
         Some((98, "Tunnel validated, setting system proxy...".to_string()))
-    } else if line.contains("exit:") || line.contains("egress:") {
+    } else if line.contains("[+] aether tunnel ready:") || (!line.contains("rejected") && (line.contains("exit:") || line.contains("egress:"))) {
         Some((100, "Connected".to_string()))
     } else {
         None
@@ -1045,11 +1061,19 @@ fn extract_progress(line: &str) -> Option<(u8, String)> {
 /// The MASQUE family prints "...; exposing socks5" for the outer hop of
 /// MASQUE-in-MASQUE before any inner hop answers, so that line alone must
 /// never be read as a connection.
-fn is_socks_listener_ready(line: &str) -> bool {
-    line.contains("socks5 server listening")
-        || line.contains("socks5 listening on")
-        || line.contains("psiphon is ready;")
-        || line.contains("tor is ready;")
+/// Only mark connected when the listener address equals expected_port.
+fn is_socks_listener_ready(line: &str, expected_port: u16) -> bool {
+    let port_str = format!(":{expected_port}");
+    if line.contains("[+] aether tunnel ready: socks5 bound on") {
+        return line.contains(&port_str);
+    }
+    if line.contains("socks5 server listening on") || line.contains("socks5 listening on") {
+        return line.contains(&port_str);
+    }
+    if line.contains("psiphon is ready;") || line.contains("tor is ready;") {
+        return line.contains(&port_str) || line.contains("leaves through");
+    }
+    false
 }
 
 fn is_bind_conflict(line: &str) -> bool {
@@ -1141,7 +1165,7 @@ async fn run_candidate_once(
                 match line { Ok(Some(line)) => {
                     port_conflict |= is_bind_conflict(&line);
                     saw_data_plane |= is_data_plane_confirmation(&line);
-                    socks_bound |= is_socks_listener_ready(&line);
+                    socks_bound |= is_socks_listener_ready(&line, socks_port);
                     emit_auto_log(app, log_level(&line), format!("[AUTO #{id}] {line}"));
                 }, Ok(None) => stderr = None, Err(error) => { emit_auto_log(app, "WARN", format!("[AUTO #{id}] stderr read error: {error}")); stderr = None; } }
             }
@@ -1149,7 +1173,7 @@ async fn run_candidate_once(
                 match line { Ok(Some(line)) => {
                     port_conflict |= is_bind_conflict(&line);
                     saw_data_plane |= is_data_plane_confirmation(&line);
-                    socks_bound |= is_socks_listener_ready(&line);
+                    socks_bound |= is_socks_listener_ready(&line, socks_port);
                     emit_auto_log(app, log_level(&line), format!("[AUTO #{id}] {line}"));
                 }, Ok(None) => stdout = None, Err(error) => { emit_auto_log(app, "WARN", format!("[AUTO #{id}] stdout read error: {error}")); stdout = None; } }
             }
@@ -1293,8 +1317,18 @@ fn handle_log_line(app: &AppHandle, line: &str, cfg: &TunnelConfig, custom_proto
         let _ = app.emit("aether-psiphon-addr", serde_json::json!({ "addr": addr }));
     }
 
+    if line.contains("selected WireGuard endpoint")
+        || line.contains("using cloudflare edge")
+        || line.contains("wg endpoint")
+        || line.contains("inner endpoint")
+    {
+        if let Some(state) = app.try_state::<Arc<Supervisor>>() {
+            state.extract_and_add_peers(line);
+        }
+    }
+
     // State machine extraction
-    if is_socks_listener_ready(line) {
+    if is_socks_listener_ready(line, cfg.socks_port) {
         if let Some(state) = app.try_state::<Arc<Supervisor>>() {
             state.set_connected(app, cfg, custom_proto);
         }
@@ -1859,11 +1893,16 @@ mod tests {
 
     #[test]
     fn socks_listener_ready_recognizes_all_modes() {
-        assert!(is_socks_listener_ready("socks5 server listening on 127.0.0.1:1819"));
-        assert!(is_socks_listener_ready("[+] psiphon is ready; 127.0.0.1:1819 leaves through psiphon"));
-        assert!(is_socks_listener_ready("[+] psiphon is ready; the tunnel goes out through 127.0.0.1:1821"));
-        assert!(is_socks_listener_ready("[+] tor is ready; 127.0.0.1:1819 leaves through tor"));
-        assert!(!is_socks_listener_ready("[*] starting psiphon with no tunnel underneath it"));
+        assert!(is_socks_listener_ready("socks5 server listening on 127.0.0.1:1819", 1819));
+        assert!(is_socks_listener_ready("[+] aether tunnel ready: socks5 bound on 127.0.0.1:1819", 1819));
+        assert!(is_socks_listener_ready("[+] psiphon is ready; 127.0.0.1:1819 leaves through psiphon", 1819));
+        assert!(is_socks_listener_ready("[+] psiphon is ready; the tunnel goes out through 127.0.0.1:1821", 1821));
+        assert!(is_socks_listener_ready("[+] tor is ready; 127.0.0.1:1819 leaves through tor", 1819));
+
+        // Mismatched port (e.g. internal throwaway listener on random port) MUST NOT match
+        assert!(!is_socks_listener_ready("socks5 server listening on 127.0.0.1:57499", 1819));
+        assert!(!is_socks_listener_ready("[+] aether tunnel ready: socks5 bound on 127.0.0.1:10808", 1819));
+        assert!(!is_socks_listener_ready("[*] starting psiphon with no tunnel underneath it", 1819));
     }
 
     #[test]
@@ -1884,5 +1923,10 @@ mod tests {
         assert_eq!(extract_progress("psiphon reached a server at 1.2.3.4").map(|(p, _)| p), Some(75));
         assert_eq!(extract_progress("[+] psiphon is ready; 127.0.0.1:1819 leaves through psiphon").map(|(p, _)| p), Some(95));
         assert_eq!(extract_progress("[+] psiphon exit: 212.227.6.72, DE via FRA, 335ms to cloudflare").map(|(p, _)| p), Some(100));
+        assert_eq!(extract_progress("[+] aether tunnel ready: socks5 bound on 127.0.0.1:1819").map(|(p, _)| p), Some(100));
+
+        // Rejected exit MUST NOT trigger 100% Connected
+        assert_eq!(extract_progress("[-] exit location IR rejected (exit must not be in IR)").map(|(p, _)| p), None);
+        assert_eq!(extract_progress("[-] warp-in-warp exit location rejected: other: exit location IR does not satisfy the requested policy").map(|(p, _)| p), None);
     }
 }

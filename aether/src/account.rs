@@ -538,6 +538,25 @@ pub async fn register_with_client(
     locale: &str,
     jwt: Option<&str>,
 ) -> Result<(AccountData, [u8; 32])> {
+    register_with_client_internal(client, model, locale, jwt, true).await
+}
+
+pub async fn register_with_proxied_client(
+    client: &reqwest::Client,
+    model: &str,
+    locale: &str,
+    jwt: Option<&str>,
+) -> Result<(AccountData, [u8; 32])> {
+    register_with_client_internal(client, model, locale, jwt, false).await
+}
+
+async fn register_with_client_internal(
+    client: &reqwest::Client,
+    model: &str,
+    locale: &str,
+    jwt: Option<&str>,
+    allow_fallback: bool,
+) -> Result<(AccountData, [u8; 32])> {
     let (wg_private, wg_public) = generate_x25519_keypair();
 
     let body = Registration {
@@ -573,6 +592,10 @@ pub async fn register_with_client(
     let account = match direct {
         Ok(account) => account,
         Err(primary) => {
+            if !allow_fallback {
+                log::warn!("[!] registration failed over proxied route: {primary}; unproxied fallback disabled to preserve tunnel identity");
+                return Err(primary);
+            }
             log::warn!("[!] registration failed over the direct route: {primary}");
             match fallback_call("registration", "POST", &path, Some(encoded), None, jwt).await {
                 Ok(account) => account,
@@ -725,6 +748,16 @@ pub async fn provision_wg_with_client(
     jwt: Option<&str>,
 ) -> Result<Identity> {
     let (reg, wg_private) = register_with_client(client, model, locale, jwt).await?;
+    finish_provision(reg, wg_private)
+}
+
+pub async fn provision_wg_with_proxied_client(
+    client: &reqwest::Client,
+    model: &str,
+    locale: &str,
+    jwt: Option<&str>,
+) -> Result<Identity> {
+    let (reg, wg_private) = register_with_proxied_client(client, model, locale, jwt).await?;
     finish_provision(reg, wg_private)
 }
 

@@ -588,7 +588,8 @@ pub async fn run_gool(
                     }
                 };
 
-                let found = match select_wg_peers(&primary, &mode_str, ip, wanted, &avoid).await {
+                let candidates_wanted = if wanted > 1 { wanted.max(4) } else { wanted };
+                let found = match select_wg_peers(&primary, &mode_str, ip, candidates_wanted, &avoid).await {
                     Ok(found) => found,
                     Err(e) => {
                         log::warn!("[-] no usable WARP endpoint found: {e}; rescanning shortly");
@@ -598,9 +599,7 @@ pub async fn run_gool(
                 };
 
                 let mut found = found;
-                if verified_scan_selected(&scan_settings) {
-                    spread_hops(&mut found);
-                }
+                spread_hops(&mut found);
 
                 let mut found = found.into_iter();
                 let outer = known_outer.or_else(|| found.next());
@@ -642,6 +641,12 @@ pub async fn run_gool(
             Err(e) => log::warn!("[-] gool tunnel ended: {e}; reconnecting"),
         }
         consecutive_fails += 1;
+        if pinned.outer.is_none() {
+            outer_peer = None;
+        }
+        if pinned.inner.is_none() {
+            inner_peer = None;
+        }
 
         tokio::time::sleep(wg_reconnect_delay()).await;
     }
@@ -1594,6 +1599,7 @@ async fn run_masque_tunnel(
     let socks_stack = hop.stack.clone();
     let socks_task = tokio::spawn(async move { socks::serve(socks_listener, socks_stack).await });
     tasks.push(socks_task.abort_handle());
+    log::info!("[+] aether tunnel ready: socks5 bound on {listen}");
 
     let http_task = spawn_http_proxy(http_listener, &hop.stack);
     if let Some(task) = &http_task {
@@ -1941,6 +1947,7 @@ pub async fn run_masque_in_masque(
     let mut socks_task =
         tokio::spawn(async move { socks::serve(socks_listener, socks_stack).await });
     tasks.push(socks_task.abort_handle());
+    log::info!("[+] aether tunnel ready: socks5 bound on {listen}");
 
     log::info!("[+] masque-in-masque ready: {peer} (outer) and {inner_peer} (inner)");
 
@@ -2524,6 +2531,7 @@ async fn run_wireguard_tunnel(
     let socks_stack = stack.clone();
     let socks_task = tokio::spawn(async move { socks::serve(socks_listener, socks_stack).await });
     tasks.push(socks_task.abort_handle());
+    log::info!("[+] aether tunnel ready: socks5 bound on {listen}");
 
     let http_task = spawn_http_proxy(http_listener, &stack);
     if let Some(task) = &http_task {
@@ -2738,10 +2746,10 @@ pub async fn provision_wg_through_stack(stack: &netstack::StackHandle) -> Result
     let local_addr = listener.local_addr().map_err(|e| AetherError::Other(e.to_string()))?;
     let stack_clone = stack.clone();
     let proxy_task = tokio::spawn(async move {
-        let _ = socks::serve(listener, stack_clone).await;
+        let _ = socks::serve_quiet(listener, stack_clone).await;
     });
 
-    let res = async {
+    let res = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let proxy = reqwest::Proxy::all(format!("socks5h://{local_addr}"))
             .map_err(|e| AetherError::Other(e.to_string()))?;
         let client = reqwest::Client::builder()
@@ -2751,9 +2759,10 @@ pub async fn provision_wg_through_stack(stack: &netstack::StackHandle) -> Result
             .build()
             .map_err(|e| AetherError::Other(e.to_string()))?;
 
-        account::provision_wg_with_client(&client, consts::DEFAULT_MODEL, consts::DEFAULT_LOCALE, None).await
-    }
-    .await;
+        account::provision_wg_with_proxied_client(&client, consts::DEFAULT_MODEL, consts::DEFAULT_LOCALE, None).await
+    })
+    .await
+    .map_err(|_| AetherError::Other("timeout provisioning WARP identity through outer tunnel".into()))?;
 
     proxy_task.abort();
     let identity = res?;
@@ -2801,12 +2810,21 @@ pub async fn run_warp_in_warp(
         let (inner_stack, inner_exit) =
             establish_wg(&current_sec, forwarder, INNER_MTU, false, 20, "inner").await?;
 
-        let policy = exitloc::Policy::from_env().or_else(|| exitloc::Policy::parse("!IR"));
+        let policy = exitloc::Policy::from_env();
         match exitloc::settle(&inner_stack, &policy, "warp-in-warp").await {
             Ok(()) => {
                 tasks.merge(forwarder_guard);
                 inner_stack_final = Some(inner_stack);
                 inner_exit_final = Some(inner_exit);
+                if current_sec.device_id != secondary.device_id {
+                    let sec_path = derive_sibling_path(
+                        &warp_config_path(
+                            &std::env::var("AETHER_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG.to_string()),
+                        ),
+                        "secondary",
+                    );
+                    let _ = config::save(&sec_path, &current_sec);
+                }
                 break;
             }
             Err(e) if attempt == 0 => {
@@ -2818,22 +2836,22 @@ pub async fn run_warp_in_warp(
                 drop(forwarder_guard);
                 match provision_wg_through_stack(&outer_stack).await {
                     Ok(new_sec) => {
-                        let sec_path = derive_sibling_path(
-                            &warp_config_path(
-                                &std::env::var("AETHER_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG.to_string()),
-                            ),
-                            "secondary",
-                        );
-                        let _ = config::save(&sec_path, &new_sec);
                         current_sec = new_sec;
                     }
                     Err(pe) => {
-                        log::warn!("[-] failed to provision via outer tunnel: {pe}");
-                        return Err(e);
+                        log::warn!("[-] failed to provision via outer tunnel: {pe}; continuing with existing identity");
                     }
                 }
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                log::warn!(
+                    "[-] warp-in-warp exit policy not satisfied ({e}), but keeping tunnel active to prevent infinite loop"
+                );
+                tasks.merge(forwarder_guard);
+                inner_stack_final = Some(inner_stack);
+                inner_exit_final = Some(inner_exit);
+                break;
+            }
         }
     }
 
@@ -2845,7 +2863,7 @@ pub async fn run_warp_in_warp(
     };
     tasks.push(inner_exit.abort_handle());
 
-    let policy = exitloc::Policy::from_env().or_else(|| exitloc::Policy::parse("!IR"));
+    let policy = exitloc::Policy::from_env();
     let policy_stack = inner_stack.clone();
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;
@@ -2864,6 +2882,7 @@ pub async fn run_warp_in_warp(
     let mut socks_task =
         tokio::spawn(async move { socks::serve(socks_listener, inner_stack).await });
     tasks.push(socks_task.abort_handle());
+    log::info!("[+] aether tunnel ready: socks5 bound on {listen}");
 
     #[derive(PartialEq)]
     enum Winner {

@@ -195,6 +195,22 @@ pub async fn serve(listener: TcpListener, stack: StackHandle) -> Result<()> {
     .await
 }
 
+pub async fn serve_quiet(listener: TcpListener, stack: StackHandle) -> Result<()> {
+    let listen = listener.local_addr()?;
+    log::debug!("[internal] temporary socks5 listening on {listen}");
+    let bind_ip = listen.ip();
+
+    accept_clients(listener, "internal-socks5", client_limit(), move |sock, peer| {
+        let stack = stack.clone();
+        async move {
+            if let Err(e) = handle_client(sock, stack, bind_ip).await {
+                log::debug!("internal socks client {peer} ended: {e}");
+            }
+        }
+    })
+    .await
+}
+
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 const ACCEPT_WARN_EVERY: Duration = Duration::from_secs(10);
