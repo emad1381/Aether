@@ -9,6 +9,9 @@ use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+pub const TUN_IP: &str = "198.19.0.1";
+pub const TUN_MASK: &str = "255.255.0.0";
+
 static TUN_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static CONFIGURED_ROUTES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static WATCHDOG_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -193,8 +196,9 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
     log::info!("[tun] using wintun at {}", wintun_dll.display());
 
     // Ensure wintun.dll is available in the current directory or tun2socks directory
-    if let Some(t_parent) = tun2socks_bin.parent() {
-        let target_dll = t_parent.join("wintun.dll");
+    let t_parent = tun2socks_bin.parent().map(|p| p.to_path_buf());
+    if let Some(ref parent) = t_parent {
+        let target_dll = parent.join("wintun.dll");
         if !target_dll.exists() && wintun_dll.exists() {
             let _ = std::fs::copy(&wintun_dll, &target_dll);
         }
@@ -205,6 +209,9 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
 
     // 1. Launch tun2socks with wintun device
     let mut cmd = Command::new(&tun2socks_bin);
+    if let Some(ref parent) = t_parent {
+        cmd.current_dir(parent);
+    }
     cmd.args([
         "-device",
         "wintun://AetherTun",
@@ -221,20 +228,23 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
         .map_err(|e| format!("Failed to spawn tun2socks: {e}"))?;
 
     // Check if child exited immediately
+    std::thread::sleep(Duration::from_millis(300));
     if let Ok(Some(status)) = child.try_wait() {
         return Err(format!("tun2socks exited immediately: {status}"));
     }
 
-    // 2. Poll for Wintun virtual adapter
-    if !wait_for_adapter(Duration::from_secs(5)) {
+    // 2. Poll for Wintun virtual adapter (wait up to 12s on Windows)
+    if !wait_for_adapter(Duration::from_secs(12)) {
         let _ = child.kill();
         let _ = child.wait();
-        return Err("AetherTun virtual adapter failed to appear in Windows network interfaces within 5s".to_string());
+        return Err("AetherTun virtual adapter failed to appear in Windows network interfaces within 12s".to_string());
     }
 
     *TUN_PROCESS.lock().unwrap() = Some(child);
 
     // 3. Configure IP address on AetherTun adapter
+    let addr_arg = format!("address={TUN_IP}");
+    let mask_arg = format!("mask={TUN_MASK}");
     if let Err(e) = run_cmd(
         "netsh",
         &[
@@ -244,8 +254,8 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
             "address",
             "name=AetherTun",
             "source=static",
-            "addr=198.18.0.1",
-            "mask=255.255.0.0",
+            &addr_arg,
+            &mask_arg,
         ],
     ) {
         log::error!("[tun] failed to configure IP on AetherTun: {e}; rolling back");
@@ -299,7 +309,7 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
     // 6. Add split default routes (0.0.0.0/1 and 128.0.0.0/1) directing all system traffic to AetherTun
     if let Err(e) = run_cmd(
         "route",
-        &["add", "0.0.0.0", "mask", "128.0.0.0", "198.18.0.1", "metric", "1"],
+        &["add", "0.0.0.0", "mask", "128.0.0.0", TUN_IP, "metric", "1"],
     ) {
         log::error!("[tun] failed to add split default route 0.0.0.0/1: {e}; rolling back");
         stop_tun(bypass_ips);
@@ -308,7 +318,7 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
 
     if let Err(e) = run_cmd(
         "route",
-        &["add", "128.0.0.0", "mask", "128.0.0.0", "198.18.0.1", "metric", "1"],
+        &["add", "128.0.0.0", "mask", "128.0.0.0", TUN_IP, "metric", "1"],
     ) {
         log::error!("[tun] failed to add split default route 128.0.0.0/1: {e}; rolling back");
         stop_tun(bypass_ips);
@@ -317,7 +327,7 @@ pub fn start_tun(socks_port: u16, bypass_ips: &[IpAddr]) -> Result<(), String> {
 
     *CONFIGURED_ROUTES.lock().unwrap() = configured;
     spawn_tun_watchdog();
-    log::info!("[tun] AetherTun virtual adapter active; full system routed via 198.18.0.1");
+    log::info!("[tun] AetherTun virtual adapter active; full system routed via {TUN_IP}");
 
     Ok(())
 }

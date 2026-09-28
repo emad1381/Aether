@@ -833,7 +833,15 @@ impl Supervisor {
             let bypass_ips = self.collect_bypass_ips(cfg);
             if let Err(e) = crate::tun::start_tun(cfg.socks_port, &bypass_ips) {
                 log::error!("[tun] failed to start TUN adapter: {e}");
+                emit_auto_log(app, "ERROR", format!("[tun] Failed to activate Wintun adapter: {e}"));
+                st.error_message = Some(format!("TUN error: {e}"));
+                st.tun_active = false;
             } else {
+                emit_auto_log(
+                    app,
+                    "INFO",
+                    format!("[tun] AetherTun virtual adapter active; full system routed via {}", crate::tun::TUN_IP),
+                );
                 st.tun_active = true;
             }
         } else if cfg.auto_system_proxy || cfg.tunnel_mode == "system-wide" {
@@ -1514,6 +1522,8 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
             }
             "gool" | "wiw" => {
                 args.push("--gool".to_string());
+                args.push("--exit-loc".to_string());
+                args.push("!IR".to_string());
                 if let Some(ref out) = cfg.wiw_outer {
                     args.push("--wiw-outer".to_string());
                     args.push(out.clone());
@@ -1525,6 +1535,8 @@ fn build_cli_args(cfg: &TunnelConfig) -> Vec<String> {
             }
             "mim" => {
                 args.push("--mim".to_string());
+                args.push("--exit-loc".to_string());
+                args.push("!IR".to_string());
                 if let Some(ref out) = cfg.mim_outer {
                     args.push("--mim-outer".to_string());
                     args.push(out.clone());

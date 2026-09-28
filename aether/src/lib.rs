@@ -1925,7 +1925,7 @@ pub async fn run_masque_in_masque(
         ));
     };
 
-    let policy = exitloc::Policy::from_env();
+    let policy = exitloc::Policy::from_env().or_else(|| exitloc::Policy::parse("!IR"));
     exitloc::settle(&inner.stack, &policy, "masque-in-masque").await?;
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;
@@ -2811,7 +2811,7 @@ pub async fn run_warp_in_warp(
         let (inner_stack, inner_exit) =
             establish_wg(&current_sec, forwarder, INNER_MTU, false, 20, "inner").await?;
 
-        let policy = exitloc::Policy::from_env();
+        let policy = exitloc::Policy::from_env().or_else(|| exitloc::Policy::parse("!IR"));
         match exitloc::settle(&inner_stack, &policy, "warp-in-warp").await {
             Ok(()) => {
                 tasks.merge(forwarder_guard);
@@ -2864,7 +2864,7 @@ pub async fn run_warp_in_warp(
     };
     tasks.push(inner_exit.abort_handle());
 
-    let policy = exitloc::Policy::from_env();
+    let policy = exitloc::Policy::from_env().or_else(|| exitloc::Policy::parse("!IR"));
     let policy_stack = inner_stack.clone();
 
     let socks_listener = socks::bind_listener("socks5", listen).await?;

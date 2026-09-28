@@ -377,8 +377,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const loc = payload.colo ? `${payload.colo} · ${payload.loc || ''}` : (payload.loc || 'Connected Edge');
       const pingText = payload.latency_ms ? `${payload.latency_ms}ms` : 'active';
+      const modeBadge = payload.tun_active
+        ? ' · <span class="text-[#2dd4bf] font-mono text-xs font-semibold">[TUN]</span>'
+        : (payload.system_proxy_active ? ' · <span class="text-[#f2711c] font-mono text-xs font-semibold">[SYS PROXY]</span>' : '');
       if (statusPrimary) {
-        statusPrimary.innerHTML = `Connected to ${loc} · <span class="text-secondary font-mono font-medium">${pingText}</span>`;
+        statusPrimary.innerHTML = `Connected to ${loc} · <span class="text-secondary font-mono font-medium">${pingText}</span>${modeBadge}`;
       }
       if (statusSecondary) {
         statusSecondary.textContent = engineLabel(payload) || getProtocolDisplayName(config.protocol);
@@ -387,7 +390,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         railStatusDot.className = 'w-2 h-2 rounded-full bg-secondary';
       }
       if (railTooltipText) {
-        railTooltipText.textContent = 'Tunnel Active (SOCKS5 + Proxy Ready)';
+        if (payload.tun_active) {
+          railTooltipText.textContent = 'TUN Adapter Active (Wintun 100% Routed)';
+        } else if (payload.system_proxy_active) {
+          railTooltipText.textContent = 'System Proxy Active (WinINET)';
+        } else {
+          railTooltipText.textContent = 'Tunnel Active (SOCKS5 Ready)';
+        }
       }
       if (!wasConnected) refreshTraceSoon();
       playRipple();
@@ -450,7 +459,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Update details drawer
-    if (dtSocks) dtSocks.textContent = `127.0.0.1:${config.socks_port}`;
+    if (dtSocks) {
+      if (visualState === 'connected' && payload.tun_active) {
+        dtSocks.innerHTML = `127.0.0.1:${config.socks_port} <span class="text-[#2dd4bf] text-[10px] font-bold ml-1 font-mono">(TUN ACTIVE)</span>`;
+      } else if (visualState === 'connected' && payload.system_proxy_active) {
+        dtSocks.innerHTML = `127.0.0.1:${config.socks_port} <span class="text-[#f2711c] text-[10px] font-bold ml-1 font-mono">(SYS PROXY)</span>`;
+      } else {
+        dtSocks.textContent = `127.0.0.1:${config.socks_port}`;
+      }
+    }
     if (dtProto) {
       if (config.psiphon_enabled && config.psiphon_mode === 'psiphon-only') {
         dtProto.textContent = getProtocolDisplayName('psiphon-only');

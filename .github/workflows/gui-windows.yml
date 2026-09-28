@@ -7,6 +7,9 @@ name: gui-windows-fast
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
